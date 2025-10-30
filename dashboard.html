@@ -13,7 +13,6 @@
  * ========================================
  * Design System: Token-based, accessible, production-grade
  * Target: Network Security & Blockchain Audit Dashboard
- * Author: Senior Frontend Engineer
  * ========================================
  */
 
@@ -97,24 +96,6 @@
   --blur-glass: blur(12px);
 }
 
-/* Dark Theme Variant (Optional - uncomment to enable) */
-/*
-:root[data-theme="dark"] {
-  --color-bg: #0f172a;
-  --color-bg-accent: linear-gradient(135deg, #1e293b 0%, #312e81 100%);
-  --color-surface: rgba(30, 41, 59, 0.95);
-  --color-surface-elev: rgba(51, 65, 85, 0.97);
-  --color-text: #f1f5f9;
-  --color-text-muted: #94a3b8;
-  --color-border: #334155;
-  --color-hover: rgba(51, 65, 85, 0.8);
-}
-*/
-
-/* ========================================
-   RESET & BASE STYLES
-   ======================================== */
-
 *, *::before, *::after {
   margin: 0;
   padding: 0;
@@ -144,6 +125,97 @@ body {
   max-width: 1400px;
   margin: 0 auto;
   width: 100%;
+}
+
+/* ========================================
+   INTEGRITY ALERT BANNER (NEW!)
+   ======================================== */
+
+.integrity-alert {
+  position: fixed;
+  top: var(--space-5);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  min-width: 500px;
+  max-width: 90vw;
+  animation: slideDown 0.4s ease-out, pulse-alert 2s ease-in-out infinite;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+@keyframes pulse-alert {
+  0%, 100% {
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 40px rgba(239, 68, 68, 0.8);
+  }
+}
+
+.alert-critical {
+  background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%);
+  color: white;
+  padding: var(--space-6);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  border: 2px solid #991b1b;
+}
+
+.alert-info {
+  background: linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%);
+  color: white;
+  padding: var(--space-6);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  border: 2px solid #1e40af;
+}
+
+.alert-critical .alert-title,
+.alert-info .alert-title {
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-bold);
+  margin-bottom: var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.alert-critical .alert-body,
+.alert-info .alert-body {
+  font-size: var(--fs-sm);
+  line-height: 1.8;
+  margin-bottom: var(--space-4);
+}
+
+.alert-button {
+  background: white;
+  color: var(--color-bad);
+  border: none;
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-sm);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  transition: transform var(--transition-fast), opacity var(--transition-fast);
+}
+
+.alert-button:hover {
+  transform: scale(1.05);
+  opacity: 0.9;
+}
+
+.alert-button:active {
+  transform: scale(0.98);
 }
 
 /* ========================================
@@ -215,9 +287,8 @@ body {
   }
 }
 
-/* Respect reduced motion preference */
 @media (prefers-reduced-motion: reduce) {
-  .pulse {
+  .pulse, .integrity-alert {
     animation: none;
   }
 }
@@ -415,6 +486,17 @@ body {
   color: var(--threat-normal-text);
 }
 
+.threat-info {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.threat-integrity {
+  background: #fee2e2;
+  color: #991b1b;
+  font-weight: var(--fw-bold);
+}
+
 /* ========================================
    THREAT LIST
    ======================================== */
@@ -528,161 +610,10 @@ body {
    RESPONSIVE BREAKPOINTS
    ======================================== */
 
-/* Large screens (1200px+) - Default styles above */
-
-/* Medium-large (992px - 1199px) */
-@media (max-width: 1199px) {
-  .stats-grid {
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  }
-}
-
-/* Medium screens (768px - 991px) */
-@media (max-width: 991px) {
-  body {
-    padding: var(--space-4);
-  }
-  
-  .header {
-    padding: var(--space-6);
-  }
-  
-  .header h1 {
-    font-size: var(--fs-xl);
-  }
-  
-  .content-section {
-    padding: var(--space-6);
-  }
-  
-  .section-title {
-    font-size: var(--fs-lg);
-  }
-}
-
-/* Small screens (576px - 767px) */
 @media (max-width: 767px) {
-  body {
-    padding: var(--space-3);
-  }
-  
-  .header {
-    flex-direction: column;
-    align-items: flex-start;
-    padding: var(--space-5);
-    gap: var(--space-4);
-  }
-  
-  .header h1 {
-    font-size: var(--fs-lg);
-  }
-  
-  .stats-grid {
-    grid-template-columns: 1fr;
-    gap: var(--space-4);
-  }
-  
-  .stat-card {
-    padding: var(--space-5);
-  }
-  
-  .stat-value {
-    font-size: 2rem;
-  }
-  
-  .content-section {
-    padding: var(--space-5);
-    margin-bottom: var(--space-5);
-  }
-  
-  .section-title {
-    font-size: var(--fs-md);
-    margin-bottom: var(--space-4);
-  }
-  
-  .events-table {
-    font-size: var(--fs-xs);
-    display: block;
-    overflow-x: auto;
-  }
-  
-  .events-table th,
-  .events-table td {
-    padding: var(--space-3) var(--space-4);
-  }
-  
-  .threat-item {
-    padding: var(--space-3);
-  }
-}
-
-/* Extra small screens (below 576px) */
-@media (max-width: 575px) {
-  .header h1 {
-    font-size: var(--fs-md);
-    gap: var(--space-2);
-  }
-  
-  .live-indicator {
-    font-size: 11px;
-    padding: var(--space-1) var(--space-3);
-  }
-  
-  .stat-value {
-    font-size: 1.75rem;
-  }
-  
-  .events-table th,
-  .events-table td {
-    padding: var(--space-2) var(--space-3);
-  }
-  
-  .threat-badge {
-    font-size: 10px;
-    padding: 2px var(--space-2);
-  }
-}
-
-/* ========================================
-   PERFORMANCE OPTIMIZATIONS
-   ======================================== */
-
-/* Minimize repaints on animations */
-.stat-card:hover,
-.threat-item:hover {
-  will-change: transform;
-}
-
-.stat-card,
-.threat-item {
-  will-change: auto;
-}
-
-/* ========================================
-   PRINT STYLES
-   ======================================== */
-
-@media print {
-  body {
-    background: white;
-    padding: 0;
-  }
-  
-  .header,
-  .content-section,
-  .stat-card {
-    box-shadow: none;
-    border: 1px solid #ccc;
-    break-inside: avoid;
-  }
-  
-  .live-indicator,
-  .pulse {
-    display: none;
-  }
-  
-  .footer {
-    color: #333;
+  .integrity-alert {
+    min-width: 90vw;
+    font-size: var(--fs-sm);
   }
 }
 
@@ -760,7 +691,7 @@ body {
 
         <!-- Footer -->
         <div class="footer">
-            <p>Powered by Adaptive Blockchain + ML Anomaly Detection</p>
+            <p>Powered by Adaptive Blockchain + ML Anomaly Detection + Integrity Monitoring</p>
             <p>© 2025 Network Security Audit System | Built with ❤️ for Security Professionals</p>
         </div>
     </div>
@@ -774,6 +705,12 @@ body {
 
         socket.on('disconnect', function() {
             console.log('❌ Disconnected from server');
+        });
+
+        // NEW: Handle integrity alerts
+        socket.on('integrity_alert', function(alert) {
+            console.log('🚨 INTEGRITY ALERT:', alert);
+            showIntegrityAlert(alert);
         });
 
         socket.on('dashboard_update', function(data) {
@@ -800,10 +737,11 @@ body {
                 
                 data.recent_events.forEach(event => {
                     const row = document.createElement('tr');
+                    const threatClass = event.block_index === 'INTEGRITY' ? 'threat-integrity' : `threat-${event.threat_level.toLowerCase()}`;
                     row.innerHTML = `
                         <td>${event.block_index}</td>
                         <td>${new Date(event.timestamp).toLocaleString()}</td>
-                        <td><span class="threat-badge threat-${event.threat_level.toLowerCase()}">${event.threat_level}</span></td>
+                        <td><span class="threat-badge ${threatClass}">${event.threat_level}</span></td>
                         <td>${event.summary}</td>
                     `;
                     eventsBody.appendChild(row);
@@ -835,9 +773,72 @@ body {
             }
         });
 
+        // NEW: Show prominent integrity alert
+        function showIntegrityAlert(alert) {
+            const alertDiv = document.createElement('div');
+            const alertClass = alert.severity === 'CRITICAL' ? 'alert-critical' : 'alert-info';
+            alertDiv.className = `integrity-alert ${alertClass}`;
+            
+            const emoji = alert.severity === 'CRITICAL' ? '🚨' : '✓';
+            const title = alert.severity === 'CRITICAL' ? 'BLOCKCHAIN TAMPERING DETECTED!' : 'Integrity Status Update';
+            
+            alertDiv.innerHTML = `
+                <div class="alert-title">
+                    <span>${emoji}</span>
+                    <span>${title}</span>
+                </div>
+                <div class="alert-body">
+                    <strong>Type:</strong> ${alert.type}<br>
+                    <strong>Time:</strong> ${new Date(alert.timestamp).toLocaleString()}<br>
+                    <strong>Message:</strong> ${alert.message.replace(/\n/g, '<br>')}
+                </div>
+                <button class="alert-button" onclick="this.parentElement.remove()">
+                    Dismiss Alert
+                </button>
+            `;
+            
+            document.body.appendChild(alertDiv);
+            
+            // Play alert sound if critical (optional)
+            if (alert.severity === 'CRITICAL') {
+                playAlertSound();
+            }
+            
+            // Auto-dismiss after 30 seconds
+            setTimeout(() => {
+                if (alertDiv.parentElement) {
+                    alertDiv.remove();
+                }
+            }, 30000);
+        }
+
+        // Optional: Play alert sound
+        function playAlertSound() {
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                oscillator.frequency.value = 800;
+                oscillator.type = 'sine';
+                
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+                
+                oscillator.start(audioContext.currentTime);
+                oscillator.stop(audioContext.currentTime + 0.5);
+            } catch (e) {
+                console.log('Audio not supported');
+            }
+        }
+
         // Initial message
         console.log('🛡️ Network Security Dashboard initialized');
         console.log('📡 Waiting for real-time updates...');
+        console.log('🔐 Integrity monitoring active');
     </script>
 </body>
 </html>

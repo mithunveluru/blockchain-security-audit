@@ -13,6 +13,7 @@ NETWORK-FOCUSED FEATURES:
 - Attack detection: DDoS, Port Scan, Brute Force, Data Exfiltration
 - Blockchain audit trail for all network events
 - Adaptive Merkle tree for efficient verification
+- Real-time tamper detection and alerts
 - Real-time dashboard with network visualizations
 '''
 
@@ -25,6 +26,7 @@ from datetime import datetime
 from collections import deque
 from flask import Flask, render_template_string, jsonify, request
 from flask_socketio import SocketIO, emit
+from integrity_monitor import IntegrityMonitor
 
 # Import our enhanced modules
 try:
@@ -39,7 +41,7 @@ except ImportError:
 
 # Configuration
 CHAIN_FILE = "network_blockchain.json"
-MONITOR_INTERVAL = 2  # seconds
+MONITOR_INTERVAL = 0.1 # seconds
 
 # Flask app setup
 app = Flask(__name__)
@@ -138,6 +140,13 @@ class NetworkSecuritySystem:
     def __init__(self):
         self.blockchain = NetworkBlockchain()
         
+        # Initialize integrity monitor with callback
+        self.integrity_monitor = IntegrityMonitor(
+            blockchain_file=CHAIN_FILE,
+            alert_callback=self._handle_integrity_alert,
+            check_interval=30  # Check every 30 seconds
+        )
+        
         if MODULES_AVAILABLE:
             self.ml_detector = MLAnomalyDetector(learning_window_days=7)
             self.packet_analyzer = NetworkPacketAnalyzer(
@@ -174,6 +183,9 @@ class NetworkSecuritySystem:
         if self.packet_analyzer:
             self.packet_analyzer.start_capture()
         
+        # Start integrity monitor
+        self.integrity_monitor.start()
+        
         self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self.monitor_thread.start()
         
@@ -183,20 +195,57 @@ class NetworkSecuritySystem:
         self.running = False
         if self.packet_analyzer:
             self.packet_analyzer.stop_capture()
+        
+        # Stop integrity monitor
+        self.integrity_monitor.stop()
+        
         print("[Network Security System] Stopped")
+    
+    def _handle_integrity_alert(self, alert):
+        """Handle integrity violation alerts"""
+        # Broadcast to dashboard via WebSocket
+        try:
+            socketio.emit('integrity_alert', alert)
+            
+            # Also log to recent events
+            self.recent_events.append({
+                'block_index': 'INTEGRITY',
+                'timestamp': alert['timestamp'],
+                'threat_level': alert['severity'],
+                'summary': f"🚨 INTEGRITY: {alert['message']}"
+            })
+            
+            # Increment threat counter for critical alerts
+            if alert['severity'] == 'CRITICAL':
+                self.stats['threats_detected'] += 1
+                
+        except Exception as e:
+            print(f"[Error] Failed to broadcast integrity alert: {e}")
     
     def _monitor_loop(self):
         while self.running:
             try:
-                if self.packet_analyzer and len(self.packet_analyzer.recent_packets) > 0:
-                    for packet_data in list(self.packet_analyzer.recent_packets)[-10:]:
-                        if self.flow_analyzer:
-                            flow_key = self.flow_analyzer.create_flow(packet_data)
-                            flow_analysis = self.flow_analyzer.analyze_flow(flow_key)
+                # Check packet analyzer for direct threat detections
+                if self.packet_analyzer:
+                    # Get alerts from detectors
+                    recent_alerts = self.packet_analyzer.get_recent_alerts()
+                    
+                    if recent_alerts:
+                        # Log each alert to blockchain
+                        for alert in recent_alerts:
+                            # Create event data for blockchain
+                            event_data = {
+                                'event_type': 'SECURITY_THREAT',
+                                'timestamp': alert.get('timestamp', datetime.now().isoformat()),
+                                'threat_level': alert.get('severity', 'MEDIUM'),
+                                'threats_detected': [alert],
+                                'flow_data': {},
+                                'anomaly_score': 0
+                            }
                             
-                            # Check if flow analysis found threats
-                            if flow_analysis.get('is_malicious'):
-                                self._log_security_event(flow_analysis)
+                            # Log to blockchain
+                            self._log_security_event(event_data)
+                            print(f"[Dashboard] Logged {alert['type']} to blockchain")
                 
                 self._update_statistics()
                 self._emit_dashboard_update()
@@ -204,6 +253,8 @@ class NetworkSecuritySystem:
                 
             except Exception as e:
                 print(f"[Error] Monitor loop: {e}")
+                import traceback
+                traceback.print_exc()
                 time.sleep(5)
     
     def _log_security_event(self, event_data):
@@ -234,13 +285,13 @@ class NetworkSecuritySystem:
         if self.packet_analyzer:
             pkt_stats = self.packet_analyzer.get_statistics()
             self.stats['packets_analyzed'] = pkt_stats['packet_count']
-        
-        if self.flow_analyzer:
-            flow_intel = self.flow_analyzer.get_network_intelligence()
-            self.stats['flows_tracked'] = flow_intel['total_flows']
+            
+            # FIX: Use packet analyzer's active_flows count instead
+            self.stats['flows_tracked'] = pkt_stats.get('active_flows', 0)
         
         self.stats['blockchain_blocks'] = len(self.blockchain.chain)
         self.stats['uptime_hours'] = (time.time() - self.stats['system_uptime']) / 3600
+
     
     def _emit_dashboard_update(self):
         try:
@@ -283,6 +334,14 @@ def verify_blockchain():
         'block_count': len(network_system.blockchain.chain)
     })
 
+@app.route('/api/integrity/status')
+def get_integrity_status():
+    return jsonify(network_system.integrity_monitor.get_status())
+
+@app.route('/api/integrity/alerts')
+def get_integrity_alerts():
+    return jsonify(network_system.integrity_monitor.alerts)
+
 @app.route('/api/start', methods=['POST'])
 def start_monitoring():
     network_system.start()
@@ -307,6 +366,8 @@ if __name__ == '__main__':
     print("📡 API Endpoints:")
     print("   • GET  /api/stats - Get statistics")
     print("   • GET  /api/blockchain/verify - Verify blockchain")
+    print("   • GET  /api/integrity/status - Integrity monitor status")
+    print("   • GET  /api/integrity/alerts - All integrity alerts")
     print("   • POST /api/start - Start monitoring")
     print("   • POST /api/stop - Stop monitoring")
     print("\n" + "="*70)

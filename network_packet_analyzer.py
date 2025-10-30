@@ -56,10 +56,14 @@ class NetworkPacketAnalyzer:
         self.active_flows = {}
         self.flow_timeout = 300  # 5 minutes
         
-        # Attack detection
-        self.port_scan_detector = PortScanDetector()
-        self.ddos_detector = DDoSDetector()
-        self.brute_force_detector = BruteForceDetector()
+        # Attack detection - INCREASED THRESHOLDS FOR PRODUCTION
+        self.port_scan_detector = PortScanDetector(threshold=3, time_window=60)
+        self.ddos_detector = DDoSDetector(threshold=200, time_window=10)  # INCREASED from 100 to 200
+        self.brute_force_detector = BruteForceDetector(threshold=5, time_window=60)  # INCREASED from 2 to 5
+        
+        # NEW: Store recent alerts for dashboard pickup
+        self.recent_alerts = deque(maxlen=100)
+        self.alert_lock = threading.Lock()
         
         # Circular buffer for recent packets (for analysis)
         self.recent_packets = deque(maxlen=10000)
@@ -72,9 +76,7 @@ class NetworkPacketAnalyzer:
         print(f"[Network Analyzer] ML Detector: {'Enabled' if ml_detector else 'Disabled'}")
     
     def start_capture(self):
-        """
-        Start packet capture in background thread
-        """
+        """Start packet capture in background thread"""
         if self.running:
             print("[Warning] Capture already running")
             return
@@ -85,27 +87,21 @@ class NetworkPacketAnalyzer:
         print(f"[Network Analyzer] Started packet capture on {self.interface}")
     
     def stop_capture(self):
-        """
-        Stop packet capture
-        """
+        """Stop packet capture"""
         self.running = False
         if self.capture_thread:
             self.capture_thread.join(timeout=5)
         print("[Network Analyzer] Stopped packet capture")
     
     def _capture_loop(self):
-        """
-        Main packet capture loop
-        """
+        """Main packet capture loop"""
         if SCAPY_AVAILABLE:
             self._capture_with_scapy()
         else:
             self._capture_simulated()
     
     def _capture_simulated(self):
-        """
-        Simulated packet capture for demonstration
-        """
+        """Simulated packet capture for demonstration"""
         import random
         
         print("[Network Analyzer] Running in SIMULATION mode")
@@ -175,11 +171,31 @@ class NetworkPacketAnalyzer:
             else:
                 time.sleep(random.uniform(0.05, 0.5))  # Normal traffic
     
+    def _capture_with_scapy(self):
+        """Real packet capture using Scapy"""
+        print("[Network Analyzer] Running in LIVE capture mode (Scapy)")
+        
+        def pkt_callback(pkt):
+            try:
+                packet_data = {
+                    "timestamp": datetime.now().isoformat(),
+                    "src_ip": pkt[scapy.IP].src if pkt.haslayer(scapy.IP) else "",
+                    "dst_ip": pkt[scapy.IP].dst if pkt.haslayer(scapy.IP) else "",
+                    "src_port": pkt[scapy.TCP].sport if pkt.haslayer(scapy.TCP) else (pkt[scapy.UDP].sport if pkt.haslayer(scapy.UDP) else 0),
+                    "dst_port": pkt[scapy.TCP].dport if pkt.haslayer(scapy.TCP) else (pkt[scapy.UDP].dport if pkt.haslayer(scapy.UDP) else 0),
+                    "protocol": "TCP" if pkt.haslayer(scapy.TCP) else ("UDP" if pkt.haslayer(scapy.UDP) else "OTHER"),
+                    "size": len(pkt),
+                    "flags": pkt.sprintf('%TCP.flags%') if pkt.haslayer(scapy.TCP) else "",
+                    "payload_hash": hashlib.md5(bytes(pkt)).hexdigest()[:16]
+                }
+                self.process_packet(packet_data)
+            except Exception as e:
+                pass  # Silently ignore malformed packets
+        
+        scapy.sniff(iface=self.interface, prn=pkt_callback, store=0)
+    
     def process_packet(self, packet_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Process captured packet and detect threats
-        Returns threat assessment
-        """
+        """Process captured packet and detect threats"""
         self.packet_count += 1
         self.byte_count += packet_data.get('size', 0)
         
@@ -217,42 +233,38 @@ class NetworkPacketAnalyzer:
         threats = []
         
         # Port scan detection
-        if self.port_scan_detector.analyze(packet_data):
-            threats.append({
-                'type': 'PORT_SCAN',
-                'severity': 'HIGH',
-                'source': src_ip,
-                'description': f'Port scan detected from {src_ip}'
-            })
+        scan_alert = self.port_scan_detector.analyze(packet_data)
+        if scan_alert:
+            threats.append(scan_alert)
+            self._add_alert(scan_alert)
         
         # DDoS detection
-        if self.ddos_detector.analyze(packet_data):
-            threats.append({
-                'type': 'DDOS_ATTACK',
-                'severity': 'CRITICAL',
-                'target': dst_ip,
-                'description': f'DDoS attack targeting {dst_ip}'
-            })
+        ddos_alert = self.ddos_detector.analyze(packet_data)
+        if ddos_alert:
+            threats.append(ddos_alert)
+            self._add_alert(ddos_alert)
         
         # Brute force detection
-        if self.brute_force_detector.analyze(packet_data):
-            threats.append({
-                'type': 'BRUTE_FORCE',
-                'severity': 'HIGH',
-                'target': f'{dst_ip}:{dst_port}',
-                'description': f'Brute force attack on {dst_ip}:{dst_port}'
-            })
+        brute_alert = self.brute_force_detector.analyze(packet_data)
+        if brute_alert:
+            threats.append(brute_alert)
+            self._add_alert(brute_alert)
         
-        # ML-based anomaly detection (FIXED - use detect_anomaly method)
+        # ML-based anomaly detection
         if self.ml_detector and threats == []:
             ml_result = self.ml_detector.detect_anomaly(packet_data)
             if ml_result['is_anomaly']:
-                threats.append({
+                ml_alert = {
                     'type': 'ANOMALY',
                     'severity': ml_result['threat_level'],
                     'score': ml_result['threat_score'],
-                    'description': f'ML detected anomaly: {ml_result["anomaly_type"]}'
-                })
+                    'source': src_ip,
+                    'target': dst_ip,
+                    'description': f'ML detected anomaly: {ml_result["anomaly_type"]}',
+                    'timestamp': packet_data['timestamp']
+                }
+                threats.append(ml_alert)
+                self._add_alert(ml_alert)
         
         # Return threat assessment
         return {
@@ -263,10 +275,20 @@ class NetworkPacketAnalyzer:
             'is_malicious': len(threats) > 0
         }
     
+    def _add_alert(self, alert: Dict):
+        """Add alert to recent alerts buffer (thread-safe)"""
+        with self.alert_lock:
+            self.recent_alerts.append(alert)
+    
+    def get_recent_alerts(self) -> List[Dict]:
+        """Get and clear recent alerts (thread-safe)"""
+        with self.alert_lock:
+            alerts = list(self.recent_alerts)
+            self.recent_alerts.clear()
+            return alerts
+    
     def _get_flow_key(self, packet_data: Dict) -> Tuple:
-        """
-        Generate flow key from packet
-        """
+        """Generate flow key from packet"""
         return (
             packet_data.get('src_ip'),
             packet_data.get('dst_ip'),
@@ -274,35 +296,9 @@ class NetworkPacketAnalyzer:
             packet_data.get('dst_port', 0),
             packet_data.get('protocol')
         )
-        
-        
-    def _capture_with_scapy(self):
-        print("[Network Analyzer] Running in LIVE capture mode (Scapy)")
-        def pkt_callback(pkt):
-            print("GOT PACKET", pkt.summary())  # ADD THIS LINE
-            try:
-                packet_data = {
-                    "timestamp": datetime.now().isoformat(),
-                    "src_ip": pkt[scapy.IP].src if pkt.haslayer(scapy.IP) else "",
-                    "dst_ip": pkt[scapy.IP].dst if pkt.haslayer(scapy.IP) else "",
-                    "src_port": pkt[scapy.TCP].sport if pkt.haslayer(scapy.TCP) else (pkt[scapy.UDP].sport if pkt.haslayer(scapy.UDP) else 0),
-                    "dst_port": pkt[scapy.TCP].dport if pkt.haslayer(scapy.TCP) else (pkt[scapy.UDP].dport if pkt.haslayer(scapy.UDP) else 0),
-                    "protocol": "TCP" if pkt.haslayer(scapy.TCP) else ("UDP" if pkt.haslayer(scapy.UDP) else "OTHER"),
-                    "size": len(pkt),
-                    "flags": pkt.sprintf('%TCP.flags%') if pkt.haslayer(scapy.TCP) else "",
-                    "payload_hash": hashlib.md5(bytes(pkt)).hexdigest()[:16]
-                }
-                self.process_packet(packet_data)
-            except Exception as e:
-                print(f"[Scapy Callback Error] {e}")
-        scapy.sniff(iface=self.interface, prn=pkt_callback, store=0)
-
-
     
     def get_statistics(self) -> Dict[str, Any]:
-        """
-        Get current network statistics
-        """
+        """Get current network statistics"""
         # Clean up old flows
         current_time = time.time()
         expired_flows = [
@@ -332,9 +328,7 @@ class NetworkPacketAnalyzer:
         }
     
     def get_network_summary(self) -> str:
-        """
-        Get human-readable network summary
-        """
+        """Get human-readable network summary"""
         stats = self.get_statistics()
         
         summary = f"""
@@ -374,53 +368,90 @@ class NetworkPacketAnalyzer:
 class PortScanDetector:
     """Detects port scanning attacks"""
     
-    def __init__(self, threshold=20, time_window=60):
-        self.threshold = threshold  # ports per time window
-        self.time_window = time_window  # seconds
+    def __init__(self, threshold=3, time_window=60):
+        self.threshold = threshold
+        self.time_window = time_window
         self.scan_data = defaultdict(lambda: defaultdict(set))
-        self.alerts = set()
+        self.scan_attempts = {}
+        self.alerted = set()
     
-    def analyze(self, packet_data: Dict) -> bool:
-        """Returns True if port scan detected"""
+    def analyze(self, packet_data: Dict) -> Dict:
+        """Returns alert dict if port scan detected, None otherwise"""
         src_ip = packet_data.get('src_ip')
         dst_ip = packet_data.get('dst_ip')
         dst_port = packet_data.get('dst_port')
         protocol = packet_data.get('protocol')
         
         if protocol not in ['TCP', 'UDP']:
-            return False
+            return None
+        
+        # FILTER OUT FALSE POSITIVES
+        if not src_ip or not dst_ip or src_ip == '' or dst_ip == '':
+            return None
+        if src_ip.startswith('224.') or dst_ip.startswith('224.'):
+            return None
+        if src_ip.startswith('169.254.') or dst_ip.startswith('169.254.'):
+            return None
+        if src_ip.startswith('255.') or dst_ip.startswith('255.'):
+            return None
         
         # Track ports accessed by this source IP
-        current_time = time.time()
         self.scan_data[src_ip][dst_ip].add(dst_port)
-        
-        # Check if threshold exceeded
         unique_ports = len(self.scan_data[src_ip][dst_ip])
         
+        # Store for stats
+        self.scan_attempts[src_ip] = {
+            'port_count': unique_ports,
+            'target': dst_ip,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        # Check if threshold exceeded
         if unique_ports >= self.threshold:
             alert_key = f"{src_ip}->{dst_ip}"
-            if alert_key not in self.alerts:
-                self.alerts.add(alert_key)
+            if alert_key not in self.alerted:
+                self.alerted.add(alert_key)
                 print(f"[ALERT] Port scan detected: {src_ip} → {dst_ip} ({unique_ports} ports)")
-                return True
+                
+                return {
+                    'type': 'PORT_SCAN',
+                    'severity': 'HIGH',
+                    'source': src_ip,
+                    'target': dst_ip,
+                    'port_count': unique_ports,
+                    'description': f"Port scan: {src_ip} contacted {unique_ports} ports on {dst_ip}",
+                    'timestamp': packet_data['timestamp']
+                }
         
-        return False
+        return None
 
 
 class DDoSDetector:
     """Detects DDoS attacks"""
     
-    def __init__(self, threshold=100, time_window=10):
-        self.threshold = threshold  # packets per time window
-        self.time_window = time_window  # seconds
+    def __init__(self, threshold=200, time_window=10):
+        self.threshold = threshold
+        self.time_window = time_window
         self.traffic_buffer = defaultdict(deque)
-        self.alerts = set()
+        self.traffic_counts = {}
+        self.alerted = set()
     
-    def analyze(self, packet_data: Dict) -> bool:
-        """Returns True if DDoS detected"""
+    def analyze(self, packet_data: Dict) -> Dict:
+        """Returns alert dict if DDoS detected, None otherwise"""
         dst_ip = packet_data.get('dst_ip')
         dst_port = packet_data.get('dst_port')
         current_time = time.time()
+        
+        # FILTER OUT FALSE POSITIVES
+        if not dst_ip or dst_ip == '':
+            return None
+        if dst_ip.startswith('224.') or dst_ip.startswith('255.') or dst_ip == '0.0.0.0':
+            return None
+        if dst_ip.startswith('169.254.'):
+            return None
+        # Skip common service discovery ports
+        if dst_port in [5353, 1900, 137, 138, 67, 68]:
+            return None
         
         # Track packets to this destination
         target = f"{dst_ip}:{dst_port}"
@@ -434,29 +465,44 @@ class DDoSDetector:
         # Check if threshold exceeded
         packet_rate = len(self.traffic_buffer[target])
         
-        if packet_rate >= self.threshold:
-            if target not in self.alerts:
-                self.alerts.add(target)
-                print(f"[ALERT] Possible DDoS attack: {target} ({packet_rate} packets in {self.time_window}s)")
-                return True
-        else:
-            self.alerts.discard(target)
+        # Store for stats
+        self.traffic_counts[target] = {
+            'count': packet_rate,
+            'timestamp': datetime.now().isoformat()
+        }
         
-        return False
+        if packet_rate >= self.threshold:
+            if target not in self.alerted:
+                self.alerted.add(target)
+                print(f"[ALERT] DDoS attack detected: {target} ({packet_rate} packets in {self.time_window}s)")
+                
+                return {
+                    'type': 'DDOS_ATTACK',
+                    'severity': 'CRITICAL',
+                    'target': target,
+                    'packet_rate': packet_rate,
+                    'description': f"DDoS attack targeting {target} ({packet_rate} packets in {self.time_window}s)",
+                    'timestamp': packet_data['timestamp']
+                }
+        else:
+            self.alerted.discard(target)
+        
+        return None
 
 
 class BruteForceDetector:
     """Detects brute force attacks"""
     
-    def __init__(self, threshold=2, time_window=60):
+    def __init__(self, threshold=5, time_window=60):
         self.threshold = threshold
         self.time_window = time_window
         self.attempts = defaultdict(deque)
-        self.alerts = set()
-        self.sensitive_ports = [21, 22, 23, 3389, 445, 3306, 5432]  # FTP, SSH, Telnet, RDP, SMB, MySQL, PostgreSQL
+        self.attempt_counts = {}
+        self.alerted = set()
+        self.sensitive_ports = [21, 22, 23, 3389, 445, 3306, 5432]
     
-    def analyze(self, packet_data: Dict) -> bool:
-        """Returns True if brute force detected"""
+    def analyze(self, packet_data: Dict) -> Dict:
+        """Returns alert dict if brute force detected, None otherwise"""
         dst_ip = packet_data.get('dst_ip')
         dst_port = packet_data.get('dst_port')
         src_ip = packet_data.get('src_ip')
@@ -464,7 +510,11 @@ class BruteForceDetector:
         
         # Only monitor sensitive ports
         if dst_port not in self.sensitive_ports or protocol != 'TCP':
-            return False
+            return None
+        
+        # FILTER OUT FALSE POSITIVES
+        if not src_ip or not dst_ip or src_ip == '' or dst_ip == '':
+            return None
         
         current_time = time.time()
         target = f"{src_ip}->{dst_ip}:{dst_port}"
@@ -480,13 +530,28 @@ class BruteForceDetector:
         # Check if threshold exceeded
         attempt_count = len(self.attempts[target])
         
-        if attempt_count >= self.threshold:
-            if target not in self.alerts:
-                self.alerts.add(target)
-                print(f"[ALERT] Possible brute force: {target} ({attempt_count} attempts in {self.time_window}s)")
-                return True
+        # Store for stats
+        self.attempt_counts[target] = {
+            'count': attempt_count,
+            'timestamp': datetime.now().isoformat()
+        }
         
-        return False
+        if attempt_count >= self.threshold:
+            if target not in self.alerted:
+                self.alerted.add(target)
+                print(f"[ALERT] Brute force detected: {target} ({attempt_count} attempts in {self.time_window}s)")
+                
+                return {
+                    'type': 'BRUTE_FORCE',
+                    'severity': 'HIGH',
+                    'source': src_ip,
+                    'target': f"{dst_ip}:{dst_port}",
+                    'attempt_count': attempt_count,
+                    'description': f"Brute force: {attempt_count} attempts from {src_ip} to {dst_ip}:{dst_port}",
+                    'timestamp': packet_data['timestamp']
+                }
+        
+        return None
 
 
 # Example usage and testing
@@ -499,16 +564,12 @@ if __name__ == "__main__":
     analyzer = NetworkPacketAnalyzer(interface='wlp0s20f3')
     
     # Start capture
-    print("\n[1] Starting packet capture (simulation mode)...")
+    print("\n[1] Starting packet capture...")
     analyzer.start_capture()
     
     # Run for 30 seconds
     print("[2] Capturing packets for 30 seconds...")
-    print("    This will simulate various network traffic patterns:")
-    print("    • Normal traffic (85%)")
-    print("    • Port scans (5%)")
-    print("    • DDoS attacks (5%)")
-    print("    • Brute force attempts (5%)")
+    print("    Monitoring for security threats...")
     print()
     
     try:
@@ -524,12 +585,16 @@ if __name__ == "__main__":
     print("\n[4] Network Analysis Results:")
     print(analyzer.get_network_summary())
     
+    # Display recent alerts
+    print("\n[5] Recent Alerts:")
+    alerts = analyzer.get_recent_alerts()
+    if alerts:
+        for alert in alerts:
+            print(f"   • {alert['type']}: {alert['description']}")
+    else:
+        print("   No alerts detected")
+    
     print("\n" + "="*70)
     print("✓ Network packet analysis demonstration complete!")
     print("="*70)
-    print("\nNOTE: This is simulation mode for demonstration.")
-    print("For real packet capture:")
-    print("  1. Install scapy: pip install scapy")
-    print("  2. Run with root/admin privileges")
-    print("  3. Specify correct network interface")
 
