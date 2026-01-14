@@ -2,14 +2,12 @@
 
 An end-to-end, SOC-ready platform that combines real-time network threat detection with a blockchain-backed, tamper-evident audit ledger to provide forensic-grade integrity and intelligent detection for modern networks.
 
----
 
 ## 1. Overview
 
 Traditional SIEM and IDS/IPS stacks struggle with: log tampering, noisy and low-context alerts, and lack of cryptographic assurance over historical data.
 This project addresses those gaps by unifying packet/flow analytics, ML-based anomaly detection, and a blockchain-style audit chain with continuous integrity monitoring and forensic reporting. 
 
----
 
 ## 2. Core Features
 
