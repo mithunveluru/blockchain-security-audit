@@ -7,43 +7,22 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.4.1/socket.io.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        /*
- * ========================================
- * NETWORK SECURITY DASHBOARD - ENTERPRISE CSS
- * ========================================
- * Design System: Token-based, accessible, production-grade
- * Target: Network Security & Blockchain Audit Dashboard
- * ========================================
- */
-
-/* ========================================
-   DESIGN TOKENS (CSS Custom Properties)
-   ======================================== */
-
 :root {
-  /* ===== Color Palette ===== */
-  /* Base & Surface */
   --color-bg: #f1f5f9;
   --color-bg-accent: linear-gradient(135deg, #e0e7ff 0%, #f3e8ff 100%);
   --color-surface: rgba(255, 255, 255, 0.97);
   --color-surface-elev: rgba(255, 255, 255, 0.99);
   --color-text: #0f172a;
   --color-text-muted: #64748b;
-  
-  /* Accents & Interactive */
   --color-accent: #4f46e5;
   --color-accent-2: #7c3aed;
   --color-border: #e2e8f0;
   --color-hover: #f8fafc;
   --color-focus: #4f46e5;
-  
-  /* Semantic Status Colors */
   --color-good: #10b981;
   --color-warn: #f59e0b;
   --color-bad: #ef4444;
   --color-info: #3b82f6;
-  
-  /* Threat Level Mappings */
   --threat-critical-bg: #fecaca;
   --threat-critical-text: #991b1b;
   --threat-high-bg: #fed7aa;
@@ -54,16 +33,12 @@
   --threat-low-text: #065f46;
   --threat-normal-bg: #dbeafe;
   --threat-normal-text: #1e40af;
-  
-  /* ===== Shadows & Radii ===== */
   --radius-sm: 8px;
   --radius-md: 14px;
   --radius-lg: 20px;
   --shadow-sm: 0 2px 8px rgba(15, 23, 42, 0.06);
   --shadow-md: 0 8px 24px rgba(15, 23, 42, 0.10);
   --shadow-lg: 0 16px 40px rgba(15, 23, 42, 0.14);
-  
-  /* ===== Spacing Scale ===== */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -73,8 +48,6 @@
   --space-8: 32px;
   --space-10: 40px;
   --space-12: 48px;
-  
-  /* ===== Typography ===== */
   --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --fs-xs: 12px;
   --fs-sm: 13px;
@@ -86,13 +59,9 @@
   --fw-medium: 500;
   --fw-semibold: 600;
   --fw-bold: 700;
-  
-  /* ===== Transitions ===== */
   --transition-fast: 150ms ease-in-out;
   --transition-base: 250ms ease-in-out;
   --transition-slow: 350ms ease-in-out;
-  
-  /* ===== Backdrop Blur ===== */
   --blur-glass: blur(12px);
 }
 
@@ -117,19 +86,11 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* ========================================
-   LAYOUT CONTAINER
-   ======================================== */
-
 .container {
   max-width: 1400px;
   margin: 0 auto;
   width: 100%;
 }
-
-/* ========================================
-   INTEGRITY ALERT BANNER (NEW!)
-   ======================================== */
 
 .integrity-alert {
   position: fixed;
@@ -218,10 +179,6 @@ body {
   transform: scale(0.98);
 }
 
-/* ========================================
-   HEADER SECTION
-   ======================================== */
-
 .header {
   background: var(--color-surface-elev);
   backdrop-filter: var(--blur-glass);
@@ -249,9 +206,11 @@ body {
   letter-spacing: -0.02em;
 }
 
-/* ========================================
-   LIVE INDICATOR
-   ======================================== */
+.header-icon {
+  width: 36px;
+  height: 36px;
+  display: inline-block;
+}
 
 .live-indicator {
   display: inline-flex;
@@ -293,20 +252,12 @@ body {
   }
 }
 
-/* ========================================
-   STATISTICS GRID
-   ======================================== */
-
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: var(--space-5);
   margin-bottom: var(--space-8);
 }
-
-/* ========================================
-   STAT CARDS
-   ======================================== */
 
 .stat-card {
   background: var(--color-surface);
@@ -357,15 +308,12 @@ body {
   position: absolute;
   right: var(--space-5);
   top: var(--space-5);
-  font-size: 2.5rem;
+  width: 42px;
+  height: 42px;
   opacity: 0.08;
   pointer-events: none;
   user-select: none;
 }
-
-/* ========================================
-   CONTENT SECTIONS
-   ======================================== */
 
 .content-section {
   background: var(--color-surface);
@@ -391,9 +339,11 @@ body {
   border-bottom: 2px solid var(--color-border);
 }
 
-/* ========================================
-   EVENTS TABLE
-   ======================================== */
+.section-icon {
+  width: 24px;
+  height: 24px;
+  display: inline-block;
+}
 
 .events-table {
   width: 100%;
@@ -445,10 +395,6 @@ body {
   border-bottom: none;
 }
 
-/* ========================================
-   THREAT BADGES
-   ======================================== */
-
 .threat-badge {
   display: inline-block;
   padding: var(--space-1) var(--space-3);
@@ -497,10 +443,6 @@ body {
   font-weight: var(--fw-bold);
 }
 
-/* ========================================
-   THREAT LIST
-   ======================================== */
-
 .threat-list {
   list-style: none;
   padding: 0;
@@ -546,10 +488,6 @@ body {
   color: var(--color-text);
 }
 
-/* ========================================
-   FOOTER
-   ======================================== */
-
 .footer {
   text-align: center;
   padding: var(--space-8) var(--space-5);
@@ -584,10 +522,6 @@ body {
   border-radius: var(--radius-sm);
 }
 
-/* ========================================
-   UTILITY: NO DATA STATE
-   ======================================== */
-
 .no-data {
   text-align: center;
   padding: var(--space-10) var(--space-5);
@@ -596,19 +530,11 @@ body {
   font-size: var(--fs-sm);
 }
 
-/* ========================================
-   ACCESSIBILITY: FOCUS STATES
-   ======================================== */
-
 *:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
-
-/* ========================================
-   RESPONSIVE BREAKPOINTS
-   ======================================== */
 
 @media (max-width: 767px) {
   .integrity-alert {
@@ -616,15 +542,17 @@ body {
     font-size: var(--fs-sm);
   }
 }
-
     </style>
 </head>
 <body>
     <div class="container">
-        <!-- Header -->
         <div class="header">
             <h1>
-                🛡️ Network Security Dashboard
+                <svg class="header-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 2L3 7V11C3 16.55 6.84 21.74 12 23C17.16 21.74 21 16.55 21 11V7L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M9 12L11 14L15 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                Network Security Dashboard
             </h1>
             <div class="live-indicator">
                 <div class="pulse"></div>
@@ -632,38 +560,61 @@ body {
             </div>
         </div>
 
-        <!-- Statistics Cards -->
         <div class="stats-grid">
             <div class="stat-card">
-                <div class="stat-icon">📦</div>
+                <svg class="stat-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" stroke="currentColor" stroke-width="2"/>
+                    <polyline points="3.27 6.96 12 12.01 20.73 6.96" stroke="currentColor" stroke-width="2"/>
+                    <line x1="12" y1="22.08" x2="12" y2="12" stroke="currentColor" stroke-width="2"/>
+                </svg>
                 <div class="stat-label">Packets Analyzed</div>
                 <div class="stat-value" id="packets">0</div>
             </div>
             <div class="stat-card">
-                <div class="stat-icon">🌊</div>
+                <svg class="stat-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M21.21 15.89A10 10 0 118 2.83" stroke="currentColor" stroke-width="2"/>
+                    <path d="M22 12A10 10 0 0012 2v10z" stroke="currentColor" stroke-width="2"/>
+                </svg>
                 <div class="stat-label">Network Flows</div>
                 <div class="stat-value" id="flows">0</div>
             </div>
             <div class="stat-card">
-                <div class="stat-icon">⚠️</div>
+                <svg class="stat-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="currentColor" stroke-width="2"/>
+                    <line x1="12" y1="9" x2="12" y2="13" stroke="currentColor" stroke-width="2"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17" stroke="currentColor" stroke-width="2"/>
+                </svg>
                 <div class="stat-label">Threats Detected</div>
                 <div class="stat-value" id="threats-count">0</div>
             </div>
             <div class="stat-card">
-                <div class="stat-icon">⛓️</div>
+                <svg class="stat-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="3" y="3" width="7" height="7" stroke="currentColor" stroke-width="2"/>
+                    <rect x="14" y="3" width="7" height="7" stroke="currentColor" stroke-width="2"/>
+                    <rect x="14" y="14" width="7" height="7" stroke="currentColor" stroke-width="2"/>
+                    <rect x="3" y="14" width="7" height="7" stroke="currentColor" stroke-width="2"/>
+                </svg>
                 <div class="stat-label">Blockchain Blocks</div>
                 <div class="stat-value" id="blocks">0</div>
             </div>
             <div class="stat-card">
-                <div class="stat-icon">⏱️</div>
+                <svg class="stat-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+                    <polyline points="12 6 12 12 16 14" stroke="currentColor" stroke-width="2"/>
+                </svg>
                 <div class="stat-label">System Uptime</div>
                 <div class="stat-value" id="uptime">0h</div>
             </div>
         </div>
 
-        <!-- Recent Security Events -->
         <div class="content-section">
-            <div class="section-title">🔔 Recent Security Events</div>
+            <div class="section-title">
+                <svg class="section-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" stroke="currentColor" stroke-width="2"/>
+                    <path d="M13.73 21a2 2 0 01-3.46 0" stroke="currentColor" stroke-width="2"/>
+                </svg>
+                Recent Security Events
+            </div>
             <table class="events-table">
                 <thead>
                     <tr>
@@ -681,18 +632,23 @@ body {
             </table>
         </div>
 
-        <!-- Active Threats -->
         <div class="content-section">
-            <div class="section-title">🚨 Active Threat Details</div>
+            <div class="section-title">
+                <svg class="section-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+                    <line x1="12" y1="8" x2="12" y2="12" stroke="currentColor" stroke-width="2"/>
+                    <line x1="12" y1="16" x2="12.01" y2="16" stroke="currentColor" stroke-width="2"/>
+                </svg>
+                Active Threat Details
+            </div>
             <ul class="threat-list" id="threats-list">
                 <li class="no-data">No active threats detected</li>
             </ul>
         </div>
 
-        <!-- Footer -->
         <div class="footer">
             <p>Powered by Adaptive Blockchain + ML Anomaly Detection + Integrity Monitoring</p>
-            <p>© 2025 Network Security Audit System | Built with ❤️ for Security Professionals</p>
+            <p>© 2025 Network Security Audit System</p>
         </div>
     </div>
 
@@ -707,7 +663,6 @@ body {
             console.log('❌ Disconnected from server');
         });
 
-        // NEW: Handle integrity alerts
         socket.on('integrity_alert', function(alert) {
             console.log('🚨 INTEGRITY ALERT:', alert);
             showIntegrityAlert(alert);
@@ -716,7 +671,6 @@ body {
         socket.on('dashboard_update', function(data) {
             console.log('📊 Dashboard update received', data);
 
-            // Update statistics
             if (data.stats) {
                 document.getElementById('packets').textContent = 
                     data.stats.packets_analyzed.toLocaleString();
@@ -730,11 +684,10 @@ body {
                     (data.stats.uptime_hours || 0).toFixed(2) + 'h';
             }
 
-            // Update recent events table
             if (data.recent_events && data.recent_events.length > 0) {
                 const eventsBody = document.getElementById('events-body');
                 eventsBody.innerHTML = '';
-                
+
                 data.recent_events.forEach(event => {
                     const row = document.createElement('tr');
                     const threatClass = event.block_index === 'INTEGRITY' ? 'threat-integrity' : `threat-${event.threat_level.toLowerCase()}`;
@@ -748,18 +701,17 @@ body {
                 });
             }
 
-            // Update active threats
             if (data.recent_threats && data.recent_threats.length > 0) {
                 const threatsList = document.getElementById('threats-list');
                 threatsList.innerHTML = '';
-                
+
                 data.recent_threats.forEach(threat => {
                     const item = document.createElement('li');
                     item.className = 'threat-item';
-                    
+
                     const threatTypes = threat.threats.map(t => t.type).join(', ');
                     const threatDesc = threat.threats.map(t => t.description).join('<br>');
-                    
+
                     item.innerHTML = `
                         <div class="threat-time">${new Date(threat.timestamp).toLocaleString()}</div>
                         <div class="threat-description">
@@ -773,18 +725,20 @@ body {
             }
         });
 
-        // NEW: Show prominent integrity alert
         function showIntegrityAlert(alert) {
             const alertDiv = document.createElement('div');
             const alertClass = alert.severity === 'CRITICAL' ? 'alert-critical' : 'alert-info';
             alertDiv.className = `integrity-alert ${alertClass}`;
-            
-            const emoji = alert.severity === 'CRITICAL' ? '🚨' : '✓';
+
+            const iconSvg = alert.severity === 'CRITICAL' 
+                ? '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="currentColor" stroke-width="2"/><line x1="12" y1="9" x2="12" y2="13" stroke="currentColor" stroke-width="2"/><line x1="12" y1="17" x2="12.01" y2="17" stroke="currentColor" stroke-width="2"/></svg>'
+                : '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><polyline points="20 6 9 17 4 12" stroke="currentColor" stroke-width="2"/></svg>';
+
             const title = alert.severity === 'CRITICAL' ? 'BLOCKCHAIN TAMPERING DETECTED!' : 'Integrity Status Update';
-            
+
             alertDiv.innerHTML = `
                 <div class="alert-title">
-                    <span>${emoji}</span>
+                    <span>${iconSvg}</span>
                     <span>${title}</span>
                 </div>
                 <div class="alert-body">
@@ -796,15 +750,13 @@ body {
                     Dismiss Alert
                 </button>
             `;
-            
+
             document.body.appendChild(alertDiv);
-            
-            // Play alert sound if critical (optional)
+
             if (alert.severity === 'CRITICAL') {
                 playAlertSound();
             }
-            
-            // Auto-dismiss after 30 seconds
+
             setTimeout(() => {
                 if (alertDiv.parentElement) {
                     alertDiv.remove();
@@ -812,22 +764,21 @@ body {
             }, 30000);
         }
 
-        // Optional: Play alert sound
         function playAlertSound() {
             try {
                 const audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 const oscillator = audioContext.createOscillator();
                 const gainNode = audioContext.createGain();
-                
+
                 oscillator.connect(gainNode);
                 gainNode.connect(audioContext.destination);
-                
+
                 oscillator.frequency.value = 800;
                 oscillator.type = 'sine';
-                
+
                 gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
                 gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
-                
+
                 oscillator.start(audioContext.currentTime);
                 oscillator.stop(audioContext.currentTime + 0.5);
             } catch (e) {
@@ -835,11 +786,9 @@ body {
             }
         }
 
-        // Initial message
         console.log('🛡️ Network Security Dashboard initialized');
         console.log('📡 Waiting for real-time updates...');
         console.log('🔐 Integrity monitoring active');
     </script>
 </body>
 </html>
-

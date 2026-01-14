@@ -1,10 +1,8 @@
+#this was only used during the testing phases to replicate actual network traffic before using Scapy to monitor and capture realt time traffic
 import json
 import random
 import hashlib
 from datetime import datetime, timedelta
-
-# Load private key for signing (assume it's loaded securely)
-# For demonstration, signing is simulated via hashing
 
 def generate_log_entry(device_id="device-001"):
     timestamp = datetime.utcnow().isoformat() + "Z"
@@ -43,7 +41,6 @@ def generate_log_entry(device_id="device-001"):
         "source_ip": source_ip
     }
     
-    # Simulate signing by creating a hash
     log_json = json.dumps(log, sort_keys=True)
     signature = hashlib.sha256(log_json.encode()).hexdigest()
     log["signature"] = signature
@@ -62,3 +59,4 @@ if __name__ == "__main__":
     with open("generated_network_logs.json", "w") as f:
         json.dump(logs, f, indent=2)
     print("Generated 100 signed network log entries in generated_network_logs.json")
+

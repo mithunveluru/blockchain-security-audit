@@ -1,9 +1,3 @@
-# adaptive_merkle_tree.py
-"""
-Adaptive Merkle Tree Implementation
-Dynamic restructuring of Merkle tree based on usage frequency for optimized verification speed and smaller proofs.
-"""
-
 import hashlib
 import heapq
 from collections import defaultdict
@@ -12,83 +6,79 @@ class AdaptiveMerkleTree:
     def __init__(self):
         self.leaves = []
         self.tree = []
-        self.access_map = defaultdict(int)
+        self.access_freq = defaultdict(int)
     
-    def add_leaf(self, leaf_hash, do_hash=True):
-        if do_hash:
-            leaf_hash = hashlib.sha256(leaf_hash.encode()).hexdigest()
-        self.leaves.append(leaf_hash)
+    def add_leaf(self, data, hashed=True):
+        if hashed:
+            data = hashlib.sha256(data.encode()).hexdigest()
+        self.leaves.append(data)
     
-    def make_tree(self):
-        nodes = self.leaves[:]
-        tree = []
-        while len(nodes) > 1:
-            layer = []
-            for i in range(0, len(nodes), 2):
-                left = nodes[i]
-                right = nodes[i+1] if i+1 < len(nodes) else left
-                combined = left + right
-                parent_hash = hashlib.sha256(combined.encode()).hexdigest()
-                layer.append(parent_hash)
-            tree.append(layer)
-            nodes = layer
-        self.tree = tree
+    def build(self):
+        curr_layer = self.leaves[:]
+        layers = []
+        
+        while len(curr_layer) > 1:
+            next_layer = []
+            i = 0
+            while i < len(curr_layer):
+                left = curr_layer[i]
+                right = curr_layer[i+1] if i+1 < len(curr_layer) else left
+                parent = hashlib.sha256((left + right).encode()).hexdigest()
+                next_layer.append(parent)
+                i += 2
+            layers.append(next_layer)
+            curr_layer = next_layer
+        
+        self.tree = layers
     
     def optimize(self):
-        # Dynamic restructuring example (Huffman-like)
-        # Count access frequency from self.access_map
-        heap = [(freq, idx) for idx, freq in self.access_map.items()]
-        heapq.heapify(heap)
-        new_order = [self.leaves[idx] for freq, idx in heap]
-        self.leaves = new_order
-        self.make_tree()
+        freq_heap = [(count, idx) for idx, count in self.access_freq.items()]
+        heapq.heapify(freq_heap)
+        reordered = [self.leaves[idx] for count, idx in freq_heap]
+        self.leaves = reordered
+        self.build()
     
-    def get_proof(self, leaf_index):
-        # Return proof path (simplified)
-        proof = []
-        index = leaf_index
-        for layer in self.tree:
-            sibling_index = index ^ 1
-            if sibling_index < len(layer):
-                proof.append(layer[sibling_index])
-            index //= 2
-        return proof
+    def get_proof(self, idx):
+        path = []
+        pos = idx
+        
+        for level in self.tree:
+            sibling_pos = pos ^ 1
+            if sibling_pos < len(level):
+                path.append(level[sibling_pos])
+            pos //= 2
+        
+        return path
     
-    def verify_proof(self, leaf_hash, proof, root):
-        computed_hash = leaf_hash
-        for sibling_hash in proof:
-            # Combine and hash
-            combined = computed_hash + sibling_hash
-            computed_hash = hashlib.sha256(combined.encode()).hexdigest()
-        return computed_hash == root
+    def verify(self, leaf, path, root):
+        h = leaf
+        for sib in path:
+            h = hashlib.sha256((h + sib).encode()).hexdigest()
+        return h == root
 
 
-# Example usage
 if __name__ == "__main__":
-    print("="*70)
+    print("=" * 70)
     print("ADAPTIVE MERKLE TREE DEMONSTRATION")
-    print("="*70)
+    print("=" * 70)
     
-    tree = AdaptiveMerkleTree()
+    mt = AdaptiveMerkleTree()
     
-    # Add leaves
-    leaves = ["tx1", "tx2", "tx3", "tx4", "tx5"]
-    for leaf in leaves:
-        tree.add_leaf(leaf)
+    txs = ["tx1", "tx2", "tx3", "tx4", "tx5"]
+    for tx in txs:
+        mt.add_leaf(tx)
     
-    # Build tree
-    tree.make_tree()
+    mt.build()
     
-    print("Merkle root:", tree.tree[-1][0] if tree.tree else None)
+    root = mt.tree[-1][0] if mt.tree else None
+    print(f"Merkle root: {root}")
     
-    # Get proof for leaf 2
-    proof = tree.get_proof(2)
-    print("Proof for leaf 2:", proof)
+    proof_path = mt.get_proof(2)
+    print(f"Proof for leaf 2: {proof_path}")
     
-    # Verify proof
-    leaf_hash = hashlib.sha256("tx3".encode()).hexdigest()
-    root = tree.tree[-1][0]
-    valid = tree.verify_proof(leaf_hash, proof, root)
-    print("Proof valid:", valid)
+    leaf_h = hashlib.sha256("tx3".encode()).hexdigest()
+    is_valid = mt.verify(leaf_h, proof_path, root)
+    print(f"Proof valid: {is_valid}")
     
-    print("\n✓ Adaptive Merkle Tree demo complete!")
+    print("\n✓ Demo complete!")
+

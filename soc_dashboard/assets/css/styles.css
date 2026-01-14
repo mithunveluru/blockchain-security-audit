@@ -34,7 +34,7 @@ html, body {
     line-height: 1.6;
 }
 
-/* LOADING SCREEN */
+
 .loading-screen {
     position: fixed;
     top: 0;
@@ -90,7 +90,7 @@ html, body {
     font-weight: 500;
 }
 
-/* HEADER */
+
 .header {
     background: linear-gradient(90deg, rgba(15, 23, 42, 0.9) 0%, rgba(30, 41, 59, 0.9) 100%);
     backdrop-filter: blur(10px);
@@ -172,14 +172,14 @@ html, body {
     color: var(--accent);
 }
 
-/* MAIN CONTAINER */
+
 .main-container {
     max-width: 1600px;
     margin: 0 auto;
     padding: 40px;
 }
 
-/* THREAT ZONE */
+
 .threat-zone {
     margin-bottom: 40px;
 }
@@ -239,7 +239,7 @@ html, body {
     font-size: 14px;
 }
 
-/* KPI SECTION */
+
 .kpi-section {
     margin-bottom: 40px;
 }
@@ -329,7 +329,6 @@ html, body {
     height: 40px;
 }
 
-/* CHARTS SECTION */
 .charts-section {
     margin-bottom: 40px;
 }
@@ -388,7 +387,7 @@ html, body {
     border-color: var(--accent);
 }
 
-/* PORT HEATMAP */
+
 .port-heatmap {
     display: grid;
     grid-template-columns: repeat(5, 1fr);
@@ -497,7 +496,7 @@ html, body {
     color: var(--text-secondary);
 }
 
-/* INTEGRITY SECTION */
+
 .integrity-section {
     margin-bottom: 40px;
 }
@@ -569,7 +568,7 @@ html, body {
     font-variant-numeric: tabular-nums;
 }
 
-/* FOOTER */
+
 .footer {
     text-align: center;
     padding: 40px 20px;
@@ -582,7 +581,7 @@ html, body {
     margin-bottom: 8px;
 }
 
-/* RESPONSIVE */
+
 @media (max-width: 1200px) {
     .charts-grid {
         grid-template-columns: 1fr;

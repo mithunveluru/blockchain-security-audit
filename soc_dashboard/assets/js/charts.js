@@ -9,7 +9,6 @@ const chartColors = {
 };
 
 function initCharts() {
-    // Threat Timeline
     const ctxTimeline = document.getElementById('threatTimeline')?.getContext('2d');
     if (ctxTimeline) {
         threatTimelineChart = new Chart(ctxTimeline, {
@@ -51,7 +50,6 @@ function initCharts() {
         });
     }
 
-    // Threat Distribution (Doughnut)
     const ctxDist = document.getElementById('threatDistribution')?.getContext('2d');
     if (ctxDist) {
         threatDistChart = new Chart(ctxDist, {
@@ -84,7 +82,6 @@ function initCharts() {
         });
     }
 
-    // Network Health (Radar)
     const ctxHealth = document.getElementById('networkHealth')?.getContext('2d');
     if (ctxHealth) {
         healthChart = new Chart(ctxHealth, {
@@ -117,7 +114,6 @@ function initCharts() {
         });
     }
 
-    // Protocol Distribution (Bar)
     const ctxProtocol = document.getElementById('protocolDist')?.getContext('2d');
     if (ctxProtocol) {
         protocolChart = new Chart(ctxProtocol, {
@@ -159,7 +155,6 @@ function initCharts() {
 function updateAllCharts(data) {
     if (!data.stats) return;
 
-    // Update threat timeline
     if (threatTimelineChart) {
         const now = new Date().toLocaleTimeString();
         threatTimelineChart.data.labels.push(now);
@@ -172,7 +167,6 @@ function updateAllCharts(data) {
         threatTimelineChart.update('none');
     }
 
-    // Update threat distribution
     if (threatDistChart && data.recent_threats) {
         const counts = { PORT_SCAN: 0, DDOS_ATTACK: 0, BRUTE_FORCE: 0, ANOMALY: 0, CLEAN: 100 };
         data.recent_threats.forEach(t => {
@@ -192,7 +186,6 @@ function updateAllCharts(data) {
         threatDistChart.update('none');
     }
 
-    // Update port heatmap
     updatePortHeatmap();
 }
 
@@ -209,7 +202,6 @@ function updatePortHeatmap() {
     }).join('');
 }
 
-// Initialize charts when page loads
 document.addEventListener('DOMContentLoaded', initCharts);
 window.updateAllCharts = updateAllCharts;
 

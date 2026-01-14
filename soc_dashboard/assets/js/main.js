@@ -1,4 +1,3 @@
-// Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
     initializeAnimations();
     initializeEventListeners();
@@ -6,7 +5,6 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function initializeAnimations() {
-    // Stagger KPI cards
     gsap.from('.kpi-card', {
         duration: 0.6,
         y: 30,
@@ -15,7 +13,6 @@ function initializeAnimations() {
         ease: 'back.out'
     });
 
-    // Threat indicator float animation
     gsap.to('.threat-gauge', {
         duration: 3,
         y: -10,
@@ -24,7 +21,6 @@ function initializeAnimations() {
         ease: 'sine.inOut'
     });
 
-    // Header glow
     gsap.to('.header', {
         duration: 2,
         boxShadow: '0 0 20px rgba(14, 165, 233, 0.5)',
@@ -34,7 +30,6 @@ function initializeAnimations() {
 }
 
 function initializeEventListeners() {
-    // Chart range controls
     document.querySelectorAll('.chart-control-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
             document.querySelectorAll('.chart-control-btn').forEach(b => b.classList.remove('active'));
@@ -42,7 +37,6 @@ function initializeEventListeners() {
         });
     });
 
-    // Make charts responsive
     window.addEventListener('resize', () => {
         if (window.threatTimelineChart) window.threatTimelineChart.resize();
         if (window.threatDistChart) window.threatDistChart.resize();
@@ -51,7 +45,6 @@ function initializeEventListeners() {
     });
 }
 
-// Spark charts for KPI cards
 function initSparkCharts() {
     const sparkConfigs = {
         'spark-threats': { color: '#ef4444', data: [1, 2, 3, 2, 1] },
@@ -91,6 +84,5 @@ function initSparkCharts() {
     }
 }
 
-// Initialize spark charts after a delay
 setTimeout(initSparkCharts, 1000);
 

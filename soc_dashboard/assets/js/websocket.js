@@ -1,6 +1,5 @@
 const socket = io();
 
-// Global data store
 window.dashboardData = {
     stats: {},
     threats: [],
@@ -19,14 +18,12 @@ socket.on('dashboard_update', (data) => {
     window.dashboardData.stats = data.stats;
     window.dashboardData.threats = data.recent_threats || [];
     
-    // Update UI
     updateKPIs(data.stats);
     updateThreatIndicator(data.stats);
     updateIncidentsTable(data.recent_threats);
     updateCharts(data);
     updateIntegrityStatus();
     
-    // Hide loading screen
     document.getElementById('loadingScreen').classList.add('hidden');
 });
 
@@ -75,7 +72,6 @@ function updateThreatIndicator(stats) {
     document.getElementById('threatStatus').textContent = status;
     document.getElementById('threatDescription').textContent = description;
     
-    // Update gauge
     const percentage = Math.min((threatLevel / 20) * 100, 100);
     const circumference = 2 * Math.PI * 40;
     const strokeDash = circumference - (percentage / 100) * circumference;
@@ -120,10 +116,8 @@ function animateValue(element, newValue) {
     const currentText = element.textContent;
     const currentValue = parseInt(currentText.replace(/,/g, '')) || 0;
     
-    // Don't animate if it's the same value
     if (currentValue === newValue) return;
     
-    // Smooth animation over 600ms
     gsap.to({ value: currentValue }, {
         value: newValue,
         duration: 0.6,
@@ -133,7 +127,6 @@ function animateValue(element, newValue) {
         }
     });
 }
-
 
 function updateIntegrityStatus(alert = null) {
     const statusCircle = document.getElementById('integrityStatus');
@@ -154,20 +147,17 @@ function updateIntegrityStatus(alert = null) {
 }
 
 function updateCharts(data) {
-    // Charts will be updated by charts.js
     if (window.updateAllCharts) {
         window.updateAllCharts(data);
     }
 }
 
 function showAlertNotification(alert) {
-    // Visual notification
     gsap.timeline()
         .from(document.body, { duration: 0.3, background: 'rgba(239, 68, 68, 0.1)' })
         .to(document.body, { duration: 0.3, background: 'linear-gradient(135deg, #0f172a 0%, #1a1f3a 100%)' });
 }
 
-// Update time display
 setInterval(() => {
     const now = new Date();
     document.getElementById('currentTime').textContent = 

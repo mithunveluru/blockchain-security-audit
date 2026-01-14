@@ -1,22 +1,4 @@
 #!/usr/bin/env python3
-'''
-enhanced_network_app.py
-
-BLOCKCHAIN-BASED NETWORK SECURITY AUDIT SYSTEM
-===============================================
-Enterprise-grade network security monitoring with blockchain immutability.
-
-NETWORK-FOCUSED FEATURES:
-- Real-time network packet capture and analysis
-- Network flow monitoring (NetFlow/IPFIX style)
-- ML-based anomaly detection for network traffic
-- Attack detection: DDoS, Port Scan, Brute Force, Data Exfiltration
-- Blockchain audit trail for all network events
-- Adaptive Merkle tree for efficient verification
-- Real-time tamper detection and alerts
-- Real-time dashboard with network visualizations
-- IP Whitelist filtering for known good traffic
-'''
 
 import os
 import time
@@ -30,7 +12,6 @@ from flask import Flask, render_template_string, jsonify, request, send_from_dir
 from flask_socketio import SocketIO, emit
 from integrity_monitor import IntegrityMonitor
 
-# Import our enhanced modules
 try:
     from adaptive_merkle_tree import AdaptiveMerkleTree
     from ml_anomaly_detector import MLAnomalyDetector
@@ -41,33 +22,25 @@ except ImportError:
     print("[Warning] Some modules not found. Using simplified mode.")
     MODULES_AVAILABLE = False
 
-# Configuration
 CHAIN_FILE = "network_blockchain.json"
-MONITOR_INTERVAL = 0.01  # seconds
+MONITOR_INTERVAL = 0.01
 
-# Flask app setup
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'network-security-blockchain-2025'
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 
 class NetworkBlockchain:
-    '''
-    Blockchain for network security audit logs
-    Each block contains network events (packets, flows, threats)
-    '''
-    
     def __init__(self, chain_file=CHAIN_FILE):
         self.chain_file = chain_file
         self.chain = []
         self.merkle_tree = AdaptiveMerkleTree() if MODULES_AVAILABLE else None
-        
-        # Load existing chain or create genesis
+
         if os.path.exists(chain_file):
             self.load_chain()
         else:
             self.create_genesis_block()
-    
+
     def create_genesis_block(self):
         genesis = {
             'index': 0,
@@ -80,7 +53,7 @@ class NetworkBlockchain:
         self.chain.append(genesis)
         self.save_chain()
         print("[Blockchain] Genesis block created")
-    
+
     def calculate_hash(self, block):
         block_string = json.dumps({
             'index': block['index'],
@@ -89,10 +62,10 @@ class NetworkBlockchain:
             'previous_hash': block['previous_hash']
         }, sort_keys=True)
         return hashlib.sha256(block_string.encode()).hexdigest()
-    
+
     def add_network_event(self, event_data):
         previous_block = self.chain[-1]
-        
+
         new_block = {
             'index': len(self.chain),
             'timestamp': datetime.now().isoformat(),
@@ -100,36 +73,36 @@ class NetworkBlockchain:
             'previous_hash': previous_block['hash'],
             'hash': ''
         }
-        
+
         new_block['hash'] = self.calculate_hash(new_block)
         self.chain.append(new_block)
-        
+
         if self.merkle_tree:
             self.merkle_tree.add_leaf(new_block['hash'], do_hash=False)
             self.merkle_tree.make_tree()
-        
+
         if len(self.chain) % 10 == 0:
             self.save_chain()
-        
+
         return new_block
-    
+
     def verify_chain(self):
         for i in range(1, len(self.chain)):
             current = self.chain[i]
             previous = self.chain[i-1]
-            
+
             if current['hash'] != self.calculate_hash(current):
                 return False, f"Block {i} hash mismatch"
-            
+
             if current['previous_hash'] != previous['hash']:
                 return False, f"Block {i} link broken"
-        
+
         return True, "Blockchain verified"
-    
+
     def save_chain(self):
         with open(self.chain_file, 'w') as f:
             json.dump(self.chain, f, indent=2)
-    
+
     def load_chain(self):
         with open(self.chain_file, 'r') as f:
             self.chain = json.load(f)
@@ -137,18 +110,15 @@ class NetworkBlockchain:
 
 
 class NetworkSecuritySystem:
-    '''Main network security monitoring system'''
-    
     def __init__(self):
         self.blockchain = NetworkBlockchain()
-        
-        # Initialize integrity monitor with callback
+
         self.integrity_monitor = IntegrityMonitor(
             blockchain_file=CHAIN_FILE,
             alert_callback=self._handle_integrity_alert,
-            check_interval=30  # Check every 30 seconds
+            check_interval=30
         )
-        
+
         if MODULES_AVAILABLE:
             self.ml_detector = MLAnomalyDetector(learning_window_days=7)
             self.packet_analyzer = NetworkPacketAnalyzer(
@@ -160,7 +130,7 @@ class NetworkSecuritySystem:
             self.ml_detector = None
             self.packet_analyzer = None
             self.flow_analyzer = None
-        
+
         self.stats = {
             'packets_analyzed': 0,
             'flows_tracked': 0,
@@ -168,137 +138,113 @@ class NetworkSecuritySystem:
             'blockchain_blocks': len(self.blockchain.chain),
             'system_uptime': time.time()
         }
-        
+
         self.recent_events = deque(maxlen=100)
         self.recent_threats = deque(maxlen=50)
         self.running = False
         self.monitor_thread = None
-        
-        # Deduplication
+
         self.last_logged_alerts = {}
-        self.alert_dedup_timeout = 5  # Don't log same alert twice in 60s
-        
-        # ✅ WHITELIST - Known good traffic sources
+        self.alert_dedup_timeout = 5
+
         self.whitelist = {
-            '13.107.0.0/16',      # Microsoft Azure
-            '13.104.0.0/14',      # Microsoft Azure (additional)
-            '52.217.0.0/16',      # AWS CloudFront
-            '52.84.0.0/15',       # AWS CloudFront (additional)
-            '34.107.0.0/16',      # Google Cloud
-            '34.64.0.0/10',       # Google Cloud (additional)
-            '104.18.0.0/15',      # Cloudflare
-            '1.1.1.1',            # Cloudflare DNS
-            '1.0.0.1',            # Cloudflare DNS (secondary)
-            '8.8.8.8',            # Google DNS
-            '8.8.4.4',            # Google DNS (secondary)
-            '127.0.0.1',          # Localhost
-            '::1',                # IPv6 Localhost
+            '13.107.0.0/16', '13.104.0.0/14', '52.217.0.0/16', '52.84.0.0/15',
+            '34.107.0.0/16', '34.64.0.0/10', '104.18.0.0/15', '1.1.1.1',
+            '1.0.0.1', '8.8.8.8', '8.8.4.4', '127.0.0.1', '::1'
         }
-        
+
         self.whitelist_enabled = True
-        
+
         print("[Network Security System] Initialized")
         print(f"[Whitelist] Enabled with {len(self.whitelist)} entries")
-    
+
     def _is_whitelisted(self, ip):
-        """Check if IP is in whitelist"""
         if not self.whitelist_enabled or not ip:
             return False
-        
+
         try:
             ip_obj = ipaddress.ip_address(ip)
-            
+
             for entry in self.whitelist:
                 try:
-                    # Check if it's a CIDR range
                     if '/' in entry:
                         if ip_obj in ipaddress.ip_network(entry, strict=False):
                             return True
-                    # Check if it's a single IP
                     elif ip == entry:
                         return True
                 except Exception:
                     pass
         except Exception:
             pass
-        
+
         return False
-    
+
     def start(self):
         if self.running:
             return
-        
+
         self.running = True
-        
+
         if self.packet_analyzer:
             self.packet_analyzer.start_capture()
-        
-        # Start integrity monitor
+
         self.integrity_monitor.start()
-        
+
         self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self.monitor_thread.start()
-        
+
         print("[Network Security System] Started monitoring")
-    
+
     def stop(self):
         self.running = False
         if self.packet_analyzer:
             self.packet_analyzer.stop_capture()
-        
-        # Stop integrity monitor
+
         self.integrity_monitor.stop()
-        
+
         print("[Network Security System] Stopped")
-    
+
     def _handle_integrity_alert(self, alert):
-        """Handle integrity violation alerts"""
         try:
             socketio.emit('integrity_alert', alert)
-            
-            # Also log to recent events
+
             self.recent_events.append({
                 'block_index': 'INTEGRITY',
                 'timestamp': alert['timestamp'],
                 'threat_level': alert['severity'],
-                'summary': f"🚨 INTEGRITY: {alert['message']}"
+                'summary': f"INTEGRITY: {alert['message']}"
             })
-            
-            # Increment threat counter for critical alerts
+
             if alert['severity'] == 'CRITICAL':
                 self.stats['threats_detected'] += 1
-                
+
         except Exception as e:
             print(f"[Error] Failed to broadcast integrity alert: {e}")
-    
+
     def _monitor_loop(self):
         while self.running:
             try:
-                # Check packet analyzer for direct threat detections
                 if self.packet_analyzer:
                     recent_alerts = self.packet_analyzer.get_recent_alerts()
-                    
+
                     if recent_alerts:
                         for alert in recent_alerts:
-                            # ✅ CHECK WHITELIST FIRST
                             source_ip = alert.get('source', '')
                             target_ip = alert.get('target', '')
-                            
+
                             if self._is_whitelisted(source_ip) or self._is_whitelisted(target_ip):
                                 print(f"[Whitelist] Ignoring {alert['type']} from {source_ip} or {target_ip} (whitelisted)")
                                 continue
-                            
-                            # ✅ DEDUPLICATION CHECK
+
                             alert_key = f"{alert['type']}_{source_ip}"
                             current_time = time.time()
-                            
+
                             if alert_key in self.last_logged_alerts:
                                 elapsed = current_time - self.last_logged_alerts[alert_key]
                                 if elapsed < self.alert_dedup_timeout:
                                     print(f"[Dedup] Skipping duplicate {alert['type']}")
                                     continue
-                            
-                            # Log the alert
+
                             event_data = {
                                 'event_type': 'SECURITY_THREAT',
                                 'timestamp': alert.get('timestamp', datetime.now().isoformat()),
@@ -307,21 +253,21 @@ class NetworkSecuritySystem:
                                 'flow_data': {},
                                 'anomaly_score': 0
                             }
-                            
+
                             self._log_security_event(event_data)
                             self.last_logged_alerts[alert_key] = current_time
                             print(f"[Dashboard] Logged {alert['type']} to blockchain")
-                
+
                 self._update_statistics()
                 self._emit_dashboard_update()
                 time.sleep(MONITOR_INTERVAL)
-                
+
             except Exception as e:
                 print(f"[Error] Monitor loop: {e}")
                 import traceback
                 traceback.print_exc()
                 time.sleep(5)
-    
+
     def _log_security_event(self, event_data):
         log_entry = {
             'event_type': 'SECURITY_THREAT',
@@ -331,30 +277,30 @@ class NetworkSecuritySystem:
             'flow_data': event_data.get('flow_data', {}),
             'anomaly_score': event_data.get('anomaly_score', 0)
         }
-        
+
         block = self.blockchain.add_network_event(log_entry)
         self.stats['threats_detected'] += 1
         self.stats['blockchain_blocks'] = len(self.blockchain.chain)
-        
+
         self.recent_events.append({
             'block_index': block['index'],
             'timestamp': log_entry['timestamp'],
             'threat_level': log_entry['threat_level'],
             'summary': f"{len(log_entry['threats'])} threat(s) detected"
         })
-        
+
         self.recent_threats.append(log_entry)
         print(f"[Security Event] Block #{block['index']} - {log_entry['threat_level']} threat logged")
-    
+
     def _update_statistics(self):
         if self.packet_analyzer:
             pkt_stats = self.packet_analyzer.get_statistics()
             self.stats['packets_analyzed'] = pkt_stats['packet_count']
             self.stats['flows_tracked'] = pkt_stats.get('active_flows', 0)
-        
+
         self.stats['blockchain_blocks'] = len(self.blockchain.chain)
         self.stats['uptime_hours'] = (time.time() - self.stats['system_uptime']) / 3600
-    
+
     def _emit_dashboard_update(self):
         try:
             update_data = {
@@ -363,16 +309,13 @@ class NetworkSecuritySystem:
                 'recent_threats': list(self.recent_threats)[-5:],
                 'timestamp': datetime.now().isoformat()
             }
-            
+
             socketio.emit('dashboard_update', update_data)
         except Exception as e:
             pass
 
 
-# Global system instance
 network_system = NetworkSecuritySystem()
-
-# Dashboard HTML served from file
 DASHBOARD_FILE = 'dashboard.html'
 
 
@@ -422,10 +365,8 @@ def stop_monitoring():
     return jsonify({'status': 'stopped'})
 
 
-# ✅ WHITELIST MANAGEMENT ENDPOINTS
 @app.route('/api/whitelist', methods=['GET'])
 def get_whitelist():
-    """Get current whitelist"""
     return jsonify({
         'whitelist': list(network_system.whitelist),
         'enabled': network_system.whitelist_enabled,
@@ -435,44 +376,39 @@ def get_whitelist():
 
 @app.route('/api/whitelist/add', methods=['POST'])
 def add_to_whitelist():
-    """Add IP or CIDR to whitelist"""
     data = request.json
     ip_or_cidr = data.get('ip')
-    
+
     if ip_or_cidr:
         network_system.whitelist.add(ip_or_cidr)
         print(f"[Whitelist] Added {ip_or_cidr}")
         return jsonify({'status': 'added', 'ip': ip_or_cidr})
-    
+
     return jsonify({'error': 'Invalid IP'}), 400
 
 
 @app.route('/api/whitelist/remove', methods=['POST'])
 def remove_from_whitelist():
-    """Remove IP or CIDR from whitelist"""
     data = request.json
     ip_or_cidr = data.get('ip')
-    
+
     if ip_or_cidr in network_system.whitelist:
         network_system.whitelist.remove(ip_or_cidr)
         print(f"[Whitelist] Removed {ip_or_cidr}")
         return jsonify({'status': 'removed', 'ip': ip_or_cidr})
-    
+
     return jsonify({'error': 'IP not found'}), 404
 
 
 @app.route('/api/whitelist/toggle', methods=['POST'])
 def toggle_whitelist():
-    """Toggle whitelist on/off"""
     network_system.whitelist_enabled = not network_system.whitelist_enabled
     print(f"[Whitelist] Toggled to {network_system.whitelist_enabled}")
     return jsonify({'enabled': network_system.whitelist_enabled})
 
 
-# ✅ SOC Dashboard routes
 @app.route('/soc')
 def soc_dashboard():
-    """Serve the professional SOC dashboard"""
     dashboard_file = os.path.join('soc_dashboard', 'index.html')
     if os.path.exists(dashboard_file):
         with open(dashboard_file, 'r') as f:
@@ -482,19 +418,16 @@ def soc_dashboard():
 
 @app.route('/soc/assets/css/<filename>')
 def soc_css(filename):
-    """Serve CSS files"""
     return send_from_directory(os.path.join('soc_dashboard', 'assets', 'css'), filename)
 
 
 @app.route('/soc/assets/js/<filename>')
 def soc_js(filename):
-    """Serve JavaScript files"""
     return send_from_directory(os.path.join('soc_dashboard', 'assets', 'js'), filename)
 
 
 @app.route('/soc/assets/<path:path>')
 def soc_assets(path):
-    """Serve all other assets"""
     return send_from_directory(os.path.join('soc_dashboard', 'assets'), path)
 
 
@@ -502,26 +435,26 @@ if __name__ == '__main__':
     print("="*70)
     print("NETWORK SECURITY BLOCKCHAIN AUDIT SYSTEM")
     print("="*70)
-    print("\n🚀 Starting system components...\n")
-    
+    print("\nStarting system components...\n")
+
     network_system.start()
-    
-    print("\n✓ System ready!\n")
-    print("\n📊 Dashboards:")
+
+    print("\nSystem ready!\n")
+    print("\nDashboards:")
     print("   • http://localhost:5000/          - Original Dashboard")
     print("   • http://localhost:5000/soc       - Professional SOC Dashboard")
-    print("\n📡 API Endpoints:")
+    print("\nAPI Endpoints:")
     print("   • GET  /api/stats                 - Get statistics")
     print("   • GET  /api/blockchain/verify     - Verify blockchain")
     print("   • GET  /api/integrity/status      - Integrity monitor status")
     print("   • GET  /api/integrity/alerts      - All integrity alerts")
     print("   • POST /api/start                 - Start monitoring")
     print("   • POST /api/stop                  - Stop monitoring")
-    print("\n🔒 Whitelist Management:")
+    print("\nWhitelist Management:")
     print("   • GET  /api/whitelist             - Get whitelist entries")
     print("   • POST /api/whitelist/add         - Add IP to whitelist")
     print("   • POST /api/whitelist/remove      - Remove IP from whitelist")
     print("   • POST /api/whitelist/toggle      - Enable/disable whitelist")
     print("\n" + "="*70)
-    
+
     socketio.run(app, host='0.0.0.0', port=5000, debug=False)
