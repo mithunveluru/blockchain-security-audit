@@ -34,7 +34,7 @@ This project addresses those gaps by unifying packet/flow analytics, ML-based an
 - Flask + Socket.IO backend providing REST APIs and real-time WebSocket updates to SOC dashboards.   
 - Whitelist management endpoints (add/remove/toggle) to suppress noise from known-good IP ranges and services.   
 
----
+
 
 ## 3. Architecture
 
@@ -59,7 +59,7 @@ The system is composed of modular, production-oriented components designed to be
 - **Flask / Socket.IO App**:  
   - Hosts REST endpoints (`/api/stats`, `/api/blockchain/verify`, `/api/integrity/status`, whitelist APIs) and serves the dashboards (`/` and `/soc`). 
 
----
+
 
 ## 4. Why It Matters (Security Impact)
 
@@ -67,7 +67,7 @@ The system is composed of modular, production-oriented components designed to be
 - **Prioritize by risk, not noise**: ML scoring, flow context, and enriched alert metadata make it easier for analysts to focus on the highest-impact events first.   
 - **Forensic-grade transparency**: Integrity violations are themselves first-class incidents, with detailed forensics on what changed and where, instead of silent log manipulation. 
 
----
+
 
 ## 5. Getting Started
 
