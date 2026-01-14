@@ -1,128 +1,85 @@
-# BLOCKCHAIN-BASED NETWORK SECURITY AUDIT SYSTEM
+# Blockchain-Based Network Security Audit System
 
-An end-to-end, SOC-ready platform that combines real-time network threat detection with blockchain-backed, tamper-evident audit logging. This project is designed to bring **forensic-grade** integrity and intelligent detection into everyday network monitoring. [conversation_history:1]
-
----
-
-## Why This Project Exists
-
-Modern networks generate massive volumes of security-relevant data, but traditional SIEMs and IDS/IPS solutions suffer from three critical gaps: [conversation_history:1]
-
-- Tampering risk: Logs can be deleted, modified, or forged after an incident, weakening forensics and compliance. [conversation_history:1]  
-- Alert overload: Signature-only systems generate noisy, low-context alerts that overwhelm analysts. [conversation_history:1]  
-- Lack of end-to-end assurance: Even when threats are detected, there is no cryptographic proof that historical data was not altered. [conversation_history:1]
-
-This project directly addresses these problems by: [conversation_history:1]
-
-- Using a blockchain-style append-only ledger for all security events, making manipulation immediately detectable. [conversation_history:1]  
-- Applying ML-based anomaly detection and flow-level analytics so that alerts are prioritized by real risk, not just rules. [conversation_history:1]  
-- Providing integrity monitoring with forensic analysis so that any tampering attempt becomes an incident in itself. [conversation_history:1]
-
-The result is a system that turns your network into its own cryptographically verifiable evidence source, suitable for incident response, audits, and regulatory reporting. [conversation_history:1]
+An end-to-end, SOC-ready platform that combines real-time network threat detection with a blockchain-backed, tamper-evident audit ledger to provide forensic-grade integrity and intelligent detection for modern networks. [conversation_history:1]
 
 ---
 
-## Key Capabilities
+## 1. Overview
 
-### 1. Network Packet & Flow Intelligence
-
-- Real-time packet capture (live via Scapy or simulation mode). [conversation_history:1]  
-- 5-tuple flow tracking (src/dst IP, src/dst port, protocol) with statistics. [conversation_history:1]  
-- Detection of:
-  - Port scanning  
-  - DDoS patterns  
-  - Brute-force activity on sensitive services  
-  - High-volume data exfiltration flows  [conversation_history:1]
-
-This provides both packet-level and flow-level visibility into attack behavior. [conversation_history:1]
-
-### 2. ML-Driven Anomaly Detection
-
-- Feature-based log analysis (time, level, IP properties, message semantics). [conversation_history:1]  
-- Isolation-Forest–style anomaly scoring plus heuristic and temporal rules. [conversation_history:1]  
-- Composite threat score (0–100) with levels: NORMAL, LOW, MEDIUM, HIGH, CRITICAL. [conversation_history:1]  
-- Threat categorization (port scan, brute force, data exfiltration, privilege escalation, unusual access, resource exhaustion). [conversation_history:1]
-
-This moves beyond static signatures and lets the system adapt to your environment. [conversation_history:1]
-
-### 3. Blockchain Security Audit Ledger
-
-- Each security event is appended as a block with index, timestamp, payload, previous hash, and block hash. [conversation_history:1]  
-- Optional Adaptive Merkle Tree support for efficient verification. [conversation_history:1]  
-- Chain verification ensures hash consistency and unbroken links. [conversation_history:1]
-
-This turns the audit trail into a cryptographic evidence chain. [conversation_history:1]
-
-### 4. Integrity Monitoring & Forensics
-
-- Continuous monitoring of the blockchain file via filesystem watching. [conversation_history:1]  
-- Baseline snapshots and deep comparison against the last known-good chain. [conversation_history:1]  
-- Forensic reporting of deleted blocks, modified fields, hash mismatches, and broken links. [conversation_history:1]
-
-Log tampering becomes a first-class, high-severity alert instead of a silent failure. [conversation_history:1]
+Traditional SIEM and IDS/IPS stacks struggle with: log tampering, noisy and low-context alerts, and lack of cryptographic assurance over historical data. [conversation_history:1]  
+This project addresses those gaps by unifying packet/flow analytics, ML-based anomaly detection, and a blockchain-style audit chain with continuous integrity monitoring and forensic reporting. [conversation_history:1]
 
 ---
 
-## Architecture Overview
+## 2. Core Features
 
-Core components: [conversation_history:1]
+### Network and Threat Analytics
 
-- **NetworkPacketAnalyzer**  
-  - Live or simulated capture.  
-  - Threat detectors: PortScanDetector, DDoSDetector, BruteForceDetector.  
-  - Optional integration with the ML anomaly engine.  
-  - Exposes recent alerts for dashboards and blockchain logging. [conversation_history:1]
+- Real-time packet capture (live via Scapy where available, or simulation mode for labs). [conversation_history:1]  
+- NetFlow-style 5‑tuple flow tracking (src/dst IP, src/dst port, protocol) with per-flow statistics. [conversation_history:1]  
+- Detection of port scans, DDoS patterns, brute-force activity on sensitive services, and high-volume data exfiltration flows. [conversation_history:1]
 
-- **NetworkFlowAnalyzer**  
-  - NetFlow-style flow tracking and analysis.  
-  - Flow-based detection of DDoS, port scans, brute force, and exfiltration.  
-  - Produces flow-level threat events. [conversation_history:1]
+### ML-Driven Anomaly Detection
 
-- **MLAnomalyDetector**  
-  - Feature extraction from logs and flow summaries.  
-  - Unsupervised learning plus heuristics and temporal scoring.  
-  - Returns threat score, level, type, and score components. [conversation_history:1]
+- Feature extraction from logs/flows: time, level, IP characteristics, message properties, and behavioral signals. [conversation_history:1]  
+- Unsupervised anomaly scoring (Isolation-Forest–style) combined with heuristics and temporal context into a single 0–100 threat score with NORMAL/LOW/MEDIUM/HIGH/CRITICAL levels. [conversation_history:1]  
+- Threat classification into categories such as port_scan, brute_force, data_exfil, privilege_escalation, unusual_access, and resource_exhaustion. [conversation_history:1]
 
-- **NetworkBlockchain**  
-  - Minimal blockchain tailored for audit events.  
-  - Optional Merkle tree for efficient verification.  
-  - Chain persistence and verification API. [conversation_history:1]
+### Blockchain Audit Ledger and Integrity
 
-- **IntegrityMonitor**  
-  - Watches blockchain storage for changes.  
-  - Runs forensic analysis and raises structured alerts. [conversation_history:1]
+- Append-only blockchain structure for all security events, each block containing index, timestamp, payload, previous hash, and block hash. [conversation_history:1]  
+- Optional adaptive Merkle tree for efficient proof-of-inclusion and state verification. [conversation_history:1]  
+- Continuous integrity monitoring with baseline snapshots, detection of deleted/modified blocks, hash mismatches, and broken links, with full forensic reports on tampering. [conversation_history:1]
 
-- **Flask + Socket.IO Application**  
-  - REST API for stats, verification, whitelist management, and control.  
-  - SOC dashboard endpoints with real-time WebSocket updates. [conversation_history:1]
+### Operations and SOC Integration
+
+- Flask + Socket.IO backend providing REST APIs and real-time WebSocket updates to SOC dashboards. [conversation_history:1]  
+- Whitelist management endpoints (add/remove/toggle) to suppress noise from known-good IP ranges and services. [conversation_history:1]  
 
 ---
 
-## How It Revolutionizes Security
+## 3. Architecture
 
-1. **From “trust the logs” to “prove the logs”**  
-   Cryptographically links and verifies audit records, so integrity can be demonstrated, not assumed. [conversation_history:1]
+The system is composed of modular, production-oriented components designed to be understandable and extensible by engineers. [conversation_history:1]
 
-2. **From alert floods to risk-ranked intelligence**  
-   Alerts carry a scored risk, type, and context so analysts can triage by impact, not just volume. [conversation_history:1]
+- **NetworkPacketAnalyzer**:  
+  - Captures packets (live or simulated), maintains protocol/IP/port statistics, tracks flows, and runs PortScan, DDoS, and BruteForce detectors.  
+  - Optionally passes events to the ML anomaly detector and exposes recent alerts for dashboards and blockchain logging. [conversation_history:1]
 
-3. **From black-box detection to forensic transparency**  
-   Detections, blocks, and integrity findings are all traceable and explainable for post-incident review. [conversation_history:1]
+- **NetworkFlowAnalyzer**:  
+  - Maintains 5‑tuple flows, computes duration/packet/byte rates, and detects DDoS, port scans, brute-force attempts, and data exfiltration at the flow level. [conversation_history:1]
 
-4. **From siloed tools to a unified evidence pipeline**  
-   Packet capture, flow analysis, ML detection, and blockchain logging form a cohesive chain of evidence. [conversation_history:1]
+- **MLAnomalyDetector**:  
+  - Trains on historical logs, scores new events, and returns threat_score, threat_level, anomaly_type, component breakdown, and derived statistics. [conversation_history:1]
+
+- **NetworkBlockchain**:  
+  - Minimal blockchain engine specialized for audit events, supporting block append, chain verification, and Merkle-tree updates. [conversation_history:1]
+
+- **IntegrityMonitor**:  
+  - Watches the blockchain file, runs periodic and event-driven validation, compares against the last known-good chain, and emits structured integrity alerts. [conversation_history:1]
+
+- **Flask / Socket.IO App**:  
+  - Hosts REST endpoints (`/api/stats`, `/api/blockchain/verify`, `/api/integrity/status`, whitelist APIs) and serves the dashboards (`/` and `/soc`). [conversation_history:1]
 
 ---
 
-## Getting Started
+## 4. Why It Matters (Security Impact)
 
-### Prerequisites
+- **Prove, not just trust, your logs**: Every event is chained and continuously verified, turning the audit trail into cryptographic evidence for incident response and compliance. [conversation_history:1]  
+- **Prioritize by risk, not noise**: ML scoring, flow context, and enriched alert metadata make it easier for analysts to focus on the highest-impact events first. [conversation_history:1]  
+- **Forensic-grade transparency**: Integrity violations are themselves first-class incidents, with detailed forensics on what changed and where, instead of silent log manipulation. [conversation_history:1]
 
-- Python 3.13 (or compatible 3.11+ environment). [conversation_history:1]  
-- Linux environment recommended for live capture and simulations. [conversation_history:1]  
-- Optional tools: `scapy`, `nmap`, `hping3` for full functionality. [conversation_history:1]
+---
 
-### Installation
+## 5. Getting Started
+
+### 5.1 Prerequisites
+
+- Python 3.13 (or 3.11+ with compatible dependencies). [conversation_history:1]  
+- Linux environment recommended for live packet capture and traffic simulation. [conversation_history:1]  
+- Optional external tools (for full functionality and lab testing): `scapy`, `nmap`, `hping3`. [conversation_history:1]
+
+### 5.2 Installation
 
 ```bash
 git clone <your-repo-url>.git
@@ -132,27 +89,68 @@ python -m venv venv
 source venv/bin/activate
 
 pip install -r requirements.txt
-
-
 ```
-### Configuration Highlights
-Capture interface via NetworkPacketAnalyzer(interface='wlp0s20f3', ...). [conversation_history:1]
-
-Detection thresholds tunable for DDoS, port scan, brute force, and exfiltration in the analyzer/flow modules. [conversation_history:1]
-
-Whitelist control via /api/whitelist/add, /remove, and /toggle. [conversation_history:1]
-
-ML learning window via MLAnomalyDetector(learning_window_days=7). [conversation_history:1]
 
 
+### 5.3 Configuration
+Key configuration points before first run: 
 
-### Intended Use & Scope
-This project is intended as a research- and education-grade platform for: [conversation_history:1]
+Capture interface
 
-Security engineering
+Set your NIC in the packet analyzer, for example:
+NetworkPacketAnalyzer(interface="wlp0s20f3", ml_detector=...).
 
-Network forensics
+Detection thresholds
 
-Blockchain-for-security experimentation
+Tune thresholds for DDoS, port scan, brute force, and data exfiltration in the packet and flow analyzer classes to match your environment’s normal behavior. 
 
-It serves as a blueprint for next-generation systems that blend network analytics, ML, and cryptographic integrity guarantees in one stack. [conversation_history:1]
+Whitelist
+
+Manage trusted IPs/ranges via:
+
+GET /api/whitelist
+
+POST /api/whitelist/add
+
+POST /api/whitelist/remove
+
+POST /api/whitelist/toggle
+to filter noise from known-good services.
+
+ML training window
+
+Configure MLAnomalyDetector(learning_window_days=7) (or another value) to define how much historical data forms the baseline.
+
+
+## 6. Running the System
+Start the main application:
+
+bash
+python enhanced_network_app.py
+
+Access:
+Main dashboard: http://localhost:5000/
+
+SOC dashboard: http://localhost:5000/soc
+
+Useful APIs:
+
+GET /api/stats – overall statistics and live metrics.
+
+GET /api/blockchain/verify – blockchain integrity verification.
+
+GET /api/integrity/status – integrity monitor runtime state.
+
+GET /api/integrity/alerts – recent integrity alerts.
+
+## 7. Optional: Threat Simulation (Lab Use Only)
+To validate detections end-to-end in a controlled lab, you can use the threat simulation script to generate port-scan and DDoS patterns against your own host. [conversation_history:1]
+
+bash
+chmod +x threat_simulation.sh
+./threat_simulation.sh
+Use this only in an authorized, isolated environment.
+
+## 8. Intended Use and Extension
+This codebase is intended as a research- and education-grade reference implementation for: security engineering, network forensics, and blockchain-for-security experimentation. 
+It serves as a blueprint for integrating network analytics, ML, and cryptographic integrity guarantees into future SIEM/SOC architectures and can be extended with new detectors, data sources, and dashboards. 
