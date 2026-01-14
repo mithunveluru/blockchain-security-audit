@@ -116,15 +116,24 @@ function updateIncidentsTable(threats) {
     }).join('');
 }
 
-function animateValue(element, value) {
-    gsap.to(element, {
+function animateValue(element, newValue) {
+    const currentText = element.textContent;
+    const currentValue = parseInt(currentText.replace(/,/g, '')) || 0;
+    
+    // Don't animate if it's the same value
+    if (currentValue === newValue) return;
+    
+    // Smooth animation over 600ms
+    gsap.to({ value: currentValue }, {
+        value: newValue,
         duration: 0.6,
         ease: 'power2.out',
         onUpdate: function() {
-            element.textContent = typeof value === 'number' ? Math.round(this.progress() * value) : value;
+            element.textContent = Math.round(this.targets()[0].value).toLocaleString();
         }
     });
 }
+
 
 function updateIntegrityStatus(alert = null) {
     const statusCircle = document.getElementById('integrityStatus');

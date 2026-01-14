@@ -12,9 +12,10 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
     
     <!-- CSS Files -->
-    <link rel="stylesheet" href="assets/css/styles.css">
-    <link rel="stylesheet" href="assets/css/animations.css">
+    <link rel="stylesheet" href="/soc/assets/css/styles.css">
+    <link rel="stylesheet" href="/soc/assets/css/animations.css">
 </head>
+
 <body>
     <!-- LOADING SCREEN -->
     <div id="loadingScreen" class="loading-screen">
@@ -120,7 +121,59 @@
             </div>
         </section>
 
-        <!-- CHARTS GRID -->
+        <!-- BLOCKCHAIN INTEGRITY - MOVED UP -->
+        <section class="integrity-section">
+            <h2 class="section-title">Blockchain Integrity</h2>
+            <div class="integrity-panel">
+                <div class="integrity-status">
+                    <div class="status-circle" id="integrityStatus">✓</div>
+                    <div class="status-info">
+                        <h3 id="integrityTitle">Blockchain Valid</h3>
+                        <p id="integrityDesc">All blocks verified and immutable</p>
+                    </div>
+                </div>
+                <div class="integrity-stats">
+                    <div class="integrity-stat">
+                        <span class="stat-label">Total Blocks</span>
+                        <span class="stat-value" id="stat-blocks">1</span>
+                    </div>
+                    <div class="integrity-stat">
+                        <span class="stat-label">Integrity Checks</span>
+                        <span class="stat-value" id="stat-checks">0</span>
+                    </div>
+                    <div class="integrity-stat">
+                        <span class="stat-label">Chain Status</span>
+                        <span class="stat-value" id="stat-chain">Valid</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- INCIDENTS TABLE - MOVED UP -->
+        <section class="incidents-section">
+            <h2 class="section-title">Active Incidents</h2>
+            <div class="incidents-container">
+                <table class="incidents-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Threat Type</th>
+                            <th>Severity</th>
+                            <th>Source/Target</th>
+                            <th>Details</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="incidentsBody">
+                        <tr class="no-data">
+                            <td colspan="6">Waiting for incidents...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- CHARTS GRID - MOVED DOWN -->
         <section class="charts-section">
             <h2 class="section-title">Real-Time Analytics</h2>
             <div class="charts-grid">
@@ -170,58 +223,6 @@
             </div>
         </section>
 
-        <!-- INCIDENTS TABLE -->
-        <section class="incidents-section">
-            <h2 class="section-title">Active Incidents</h2>
-            <div class="incidents-container">
-                <table class="incidents-table">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>Threat Type</th>
-                            <th>Severity</th>
-                            <th>Source/Target</th>
-                            <th>Details</th>
-                            <th>Status</th>
-                        </tr>
-                    </thead>
-                    <tbody id="incidentsBody">
-                        <tr class="no-data">
-                            <td colspan="6">Waiting for incidents...</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </section>
-
-        <!-- BLOCKCHAIN INTEGRITY -->
-        <section class="integrity-section">
-            <h2 class="section-title">Blockchain Integrity</h2>
-            <div class="integrity-panel">
-                <div class="integrity-status">
-                    <div class="status-circle" id="integrityStatus">✓</div>
-                    <div class="status-info">
-                        <h3 id="integrityTitle">Blockchain Valid</h3>
-                        <p id="integrityDesc">All blocks verified and immutable</p>
-                    </div>
-                </div>
-                <div class="integrity-stats">
-                    <div class="integrity-stat">
-                        <span class="stat-label">Total Blocks</span>
-                        <span class="stat-value" id="stat-blocks">1</span>
-                    </div>
-                    <div class="integrity-stat">
-                        <span class="stat-label">Integrity Checks</span>
-                        <span class="stat-value" id="stat-checks">0</span>
-                    </div>
-                    <div class="integrity-stat">
-                        <span class="stat-label">Chain Status</span>
-                        <span class="stat-value" id="stat-chain">Valid</span>
-                    </div>
-                </div>
-            </div>
-        </section>
-
         <!-- FOOTER -->
         <footer class="footer">
             <p>🛡️ Enterprise Network Security Blockchain Audit System</p>
@@ -230,9 +231,8 @@
     </main>
 
     <!-- JavaScript Files -->
-    <script src="assets/js/websocket.js"></script>
-    <script src="assets/js/charts.js"></script>
-    <script src="assets/js/main.js"></script>
+    <script src="/soc/assets/js/websocket.js"></script>
+    <script src="/soc/assets/js/charts.js"></script>
+    <script src="/soc/assets/js/main.js"></script>
 </body>
 </html>
-

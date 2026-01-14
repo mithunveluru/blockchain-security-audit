@@ -57,8 +57,8 @@ class NetworkPacketAnalyzer:
         self.flow_timeout = 300  # 5 minutes
         
         # Attack detection - INCREASED THRESHOLDS FOR PRODUCTION
-        self.port_scan_detector = PortScanDetector(threshold=3, time_window=60)
-        self.ddos_detector = DDoSDetector(threshold=200, time_window=10)  # INCREASED from 100 to 200
+        self.port_scan_detector = PortScanDetector(threshold=3, time_window=10)
+        self.ddos_detector = DDoSDetector(threshold=100, time_window=5)  # INCREASED from 100 to 200
         self.brute_force_detector = BruteForceDetector(threshold=5, time_window=60)  # INCREASED from 2 to 5
         
         # NEW: Store recent alerts for dashboard pickup
