@@ -44,14 +44,12 @@ class AdaptiveMerkleTree:
         self.build()
 
     def get_proof(self, idx):
-        """Returns list of (sibling_hash, is_current_left) tuples for verification."""
         if not self.tree:
             return []
 
         path = []
         pos = idx
 
-        # tree[0] is leaves; tree[1..n-1] are internal levels; tree[-1] is root
         for level_idx in range(len(self.tree) - 1):
             level = self.tree[level_idx]
             sibling_pos = pos ^ 1
@@ -68,7 +66,6 @@ class AdaptiveMerkleTree:
         return self.tree[-1][0] if self.tree[-1] else None
 
     def verify(self, leaf, path, root):
-        """path must be list of (sibling_hash, is_current_left) tuples from get_proof()."""
         h = leaf
         for sib, is_left in path:
             if is_left:
@@ -79,27 +76,14 @@ class AdaptiveMerkleTree:
 
 
 if __name__ == "__main__":
-    print("=" * 70)
-    print("ADAPTIVE MERKLE TREE DEMONSTRATION")
-    print("=" * 70)
-    
     mt = AdaptiveMerkleTree()
-    
-    txs = ["tx1", "tx2", "tx3", "tx4", "tx5"]
-    for tx in txs:
+    for tx in ["tx1", "tx2", "tx3", "tx4", "tx5"]:
         mt.add_leaf(tx)
-    
     mt.build()
 
     root = mt.get_root()
-    print(f"Merkle root: {root}")
-    
-    proof_path = mt.get_proof(2)
-    print(f"Proof for leaf 2: {proof_path}")
-    
+    proof = mt.get_proof(2)
     leaf_h = hashlib.sha256("tx3".encode()).hexdigest()
-    is_valid = mt.verify(leaf_h, proof_path, root)
-    print(f"Proof valid: {is_valid}")
-    
-    print("\n✓ Demo complete!")
+    print(f"root: {root}")
+    print(f"proof[2] valid: {mt.verify(leaf_h, proof, root)}")
 

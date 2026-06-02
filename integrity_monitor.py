@@ -26,7 +26,7 @@ class IntegrityMonitor:
         self.monitor_thread = None
         self.observer = None
 
-        print("[Integrity Monitor] Initialized with Forensic Analysis")
+        print("[Integrity Monitor] Initialized")
 
     def start(self):
         if self.running:

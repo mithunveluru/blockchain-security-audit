@@ -1,11 +1,6 @@
-#The ML anomaly detector file adds an intelligent scoring layer that ranks events by risk, helping the admin focus on the most critical threats first. It analyzes log features and behavior patterns to flag anomalies that signature-based detectors might miss. It also aggregates statistics and threat distributions, giving the admin better visibility into overall network security posture.​
-
-
-import json
 import numpy as np
 from datetime import datetime
 from collections import deque
-from typing import Dict, List, Any, Tuple
 import hashlib
 
 class IsolationForestSimulator:
@@ -81,11 +76,9 @@ class MLAnomalyDetector:
             'critical': 95
         }
 
-        print("[ML Anomaly Detector] Initialized")
-        print(f"  Learning window: {learning_window_days} days")
-        print(f"  Features tracked: {len(self.feature_names)}")
+        print(f"[ML Detector] window={learning_window_days}d features={len(self.feature_names)}")
 
-    def extract_features(self, log_entry: Dict[str, Any]) -> np.ndarray:
+    def extract_features(self, log_entry: dict) -> np.ndarray:
         try:
             if 'timestamp' in log_entry:
                 ts = datetime.fromisoformat(log_entry['timestamp'].replace('Z', '+00:00'))
@@ -138,29 +131,19 @@ class MLAnomalyDetector:
             print(f"[Warning] Feature extraction error: {e}")
             return np.zeros(len(self.feature_names))
 
-    def train(self, historical_logs: List[Dict[str, Any]]):
-        print(f"\n[Training] Processing {len(historical_logs)} historical logs...")
-
-        features = []
-        for log in historical_logs:
-            feat = self.extract_features(log)
-            features.append(feat)
-            self.training_buffer.append(feat)
+    def train(self, historical_logs: list[dict]):
+        features = [self.extract_features(log) for log in historical_logs]
+        self.training_buffer.extend(features)
 
         if len(features) < 100:
-            print("[Warning] Insufficient training data. Need at least 100 samples.")
+            print(f"[ML Detector] train: only {len(features)} samples, need 100+")
             return
 
-        X_train = np.array(features)
-
-        print("[Training] Isolation Forest...")
-        self.isolation_forest.fit(X_train)
-
+        self.isolation_forest.fit(np.array(features))
         self.is_trained = True
-        print(f"[Training] Complete. Trained on {len(features)} samples.")
-        print(f"[Training] Baseline established for {self.learning_window_days} days of data.")
+        print(f"[ML Detector] trained on {len(features)} samples")
 
-    def detect_anomaly(self, log_entry: Dict[str, Any]) -> Dict[str, Any]:
+    def detect_anomaly(self, log_entry: dict) -> dict:
         self.threat_stats['total_analyzed'] += 1
 
         features = self.extract_features(log_entry)
@@ -226,8 +209,7 @@ class MLAnomalyDetector:
 
         return result
 
-    def _calculate_heuristic_score(self, log_entry: Dict[str, Any], 
-                                   features: np.ndarray) -> int:
+    def _calculate_heuristic_score(self, log_entry: dict, features: np.ndarray) -> int:
         score = 0
         message = log_entry.get('message', '').lower()
 
@@ -242,7 +224,7 @@ class MLAnomalyDetector:
 
         return min(20, score)
 
-    def _calculate_temporal_score(self, log_entry: Dict[str, Any]) -> int:
+    def _calculate_temporal_score(self, log_entry: dict) -> int:
         score = 0
 
         try:
@@ -274,8 +256,7 @@ class MLAnomalyDetector:
 
         return lstm_score
 
-    def _identify_threat_type(self, log_entry: Dict[str, Any], 
-                             features: np.ndarray, threat_score: int) -> str:
+    def _identify_threat_type(self, log_entry: dict, features: np.ndarray, threat_score: int) -> str:
         message = log_entry.get('message', '').lower()
 
         if 'port' in message or 'scan' in message:
@@ -291,106 +272,15 @@ class MLAnomalyDetector:
         else:
             return 'unusual_access'
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict:
         total = self.threat_stats['total_analyzed']
         anomalies = self.threat_stats['anomalies_detected']
-
         return {
             'total_logs_analyzed': total,
             'anomalies_detected': anomalies,
             'anomaly_rate': round(anomalies / total * 100, 2) if total > 0 else 0,
-            'accuracy_estimate': 98.0 if self.is_trained else 0.0,
             'false_positive_rate': round(self.threat_stats['false_positives'] / anomalies * 100, 2) if anomalies > 0 else 0,
             'threat_distribution': self.threat_stats['threat_distribution'],
             'is_trained': self.is_trained,
-            'training_samples': len(self.training_buffer)
+            'training_samples': len(self.training_buffer),
         }
-
-
-if __name__ == "__main__":
-    print("="*70)
-    print("ML ANOMALY DETECTION ENGINE - DEMONSTRATION")
-    print("="*70)
-
-    detector = MLAnomalyDetector(learning_window_days=7)
-
-    print("\n1. Generating training data (normal logs)...")
-    training_logs = []
-    for i in range(500):
-        log = {
-            'timestamp': f'2025-10-{23 - i // 50:02d}T{i % 24:02d}:30:00Z',
-            'device_id': 'device-001',
-            'level': 'INFO' if i % 10 != 0 else 'WARN',
-            'message': f'Normal operation {i}',
-            'source_ip': f'192.168.1.{i % 250}',
-            'session_id': f'sess_{1000 + i}'
-        }
-        training_logs.append(log)
-
-    detector.train(training_logs)
-
-    print("\n2. Testing anomaly detection...")
-    test_cases = [
-        {
-            'name': 'Normal Log',
-            'log': {
-                'timestamp': '2025-10-23T14:30:00Z',
-                'device_id': 'device-001',
-                'level': 'INFO',
-                'message': 'Database connection established',
-                'source_ip': '192.168.1.100',
-                'session_id': 'sess_5000'
-            }
-        },
-        {
-            'name': 'Port Scan Attack',
-            'log': {
-                'timestamp': '2025-10-23T02:15:00Z',
-                'device_id': 'device-001',
-                'level': 'ALERT',
-                'message': 'Port scan detected from external IP',
-                'source_ip': '203.45.67.89',
-                'session_id': 'sess_9999'
-            }
-        },
-        {
-            'name': 'Brute Force Attempt',
-            'log': {
-                'timestamp': '2025-10-23T03:45:00Z',
-                'device_id': 'device-001',
-                'level': 'ERROR',
-                'message': 'Failed login attempt for user root - 50 attempts',
-                'source_ip': '10.0.0.25',
-                'session_id': 'sess_8888'
-            }
-        }
-    ]
-
-    print("\n" + "-"*70)
-    for test_case in test_cases:
-        result = detector.detect_anomaly(test_case['log'])
-
-        print(f"\n{test_case['name']}:")
-        print(f"  Threat Score: {result['threat_score']}/100")
-        print(f"  Threat Level: {result['threat_level']}")
-        print(f"  Anomaly Type: {result['anomaly_type']}")
-        print(f"  Confidence: {result['confidence']*100:.1f}%")
-        print(f"  Components: IF={result['components']['isolation_forest']}, "
-              f"Rule={result['components']['heuristics']}, "
-              f"Time={result['components']['temporal']}, "
-              f"LSTM={result['components']['lstm']}")
-
-    print("\n" + "="*70)
-    print("DETECTION STATISTICS:")
-    stats = detector.get_statistics()
-    for key, value in stats.items():
-        if key != 'threat_distribution':
-            print(f"  {key}: {value}")
-
-    print("\n  Threat Distribution:")
-    for threat_type, count in stats['threat_distribution'].items():
-        print(f"    {threat_type}: {count}")
-
-    print("\n" + "="*70)
-    print("ML Anomaly Detection demonstration complete!")
-    print("="*70)

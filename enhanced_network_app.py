@@ -390,7 +390,6 @@ def get_health():
     env   = get_environment_info()
     bc_valid, bc_msg = network_system.blockchain.verify_chain()
 
-    # Derive actionable fix for permissions
     python_real = os.path.realpath(sys.executable)
     setcap_cmd  = f"sudo /usr/sbin/setcap cap_net_raw,cap_net_admin=eip {python_real}"
     sudo_cmd    = f"sudo {python_real} enhanced_network_app.py"
@@ -542,11 +541,6 @@ def soc_assets(path):
 
 
 if __name__ == '__main__':
-    print("=" * 70)
-    print("NETWORK SECURITY BLOCKCHAIN AUDIT SYSTEM")
-    print("=" * 70)
-
-    # Run dependency and environment health check
     dep_results = _run_dep_checks(
         interface=config.NETWORK_INTERFACE,
         chain_file=config.CHAIN_FILE,
@@ -574,10 +568,7 @@ if __name__ == '__main__':
             print("  Run with:  sudo python enhanced_network_app.py")
             print(f"  Or grant:  sudo setcap cap_net_raw+eip {sys.executable}\n")
 
-    # ── ENVIRONMENT + CAPTURE PREFLIGHT DIAGNOSTICS ───────────────────────────
-    print("\n" + "=" * 70)
-    print("ENVIRONMENT & CAPTURE DIAGNOSTICS")
-    print("=" * 70)
+    print("\nEnvironment & capture diagnostics:")
     try:
         from network_packet_analyzer import get_permissions_info, get_available_interfaces, SCAPY_AVAILABLE, _SCAPY_VERSION
         from health.dependency_check import get_environment_info
@@ -636,29 +627,14 @@ if __name__ == '__main__':
             print(f"    sudo /usr/sbin/setcap cap_net_raw,cap_net_admin=eip {_python_real}")
             print(f"    python {sys.argv[0]}")
     except Exception as _diag_err:
-        print(f"  [Diagnostics unavailable: {_diag_err}]")
-        import traceback; traceback.print_exc()
-    print("=" * 70)
+        print(f"  [diagnostics unavailable: {_diag_err}]")
 
-    print("\nStarting system components...\n")
+    print()
     network_system.start()
 
-    print("\nSystem ready!")
-    print(f"  Interface : {config.NETWORK_INTERFACE}")
-    print(f"  Chain file: {config.CHAIN_FILE}")
-    print(f"  Simulation: {'YES' if config.ENABLE_SIMULATION_MODE else 'NO (live capture)'}")
-    print(f"\nDashboards:")
-    print(f"   http://localhost:{config.PORT}/        - Original Dashboard")
-    print(f"   http://localhost:{config.PORT}/soc     - Professional SOC Dashboard")
-    print(f"\nAPI Endpoints:")
-    print(f"   GET  /api/stats                 - Statistics")
-    print(f"   GET  /api/blockchain/verify     - Verify blockchain")
-    print(f"   GET  /api/integrity/status      - Integrity monitor status")
-    print(f"   POST /api/start                 - Start monitoring")
-    print(f"   POST /api/stop                  - Stop monitoring")
-    print(f"   GET  /api/whitelist             - Whitelist entries")
-    print(f"   POST /api/whitelist/add         - Add IP/CIDR to whitelist")
-    print(f"   GET  /api/health                - System health + capture status")
-    print("=" * 70 + "\n")
+    sim = config.ENABLE_SIMULATION_MODE
+    print(f"Listening on http://{config.HOST}:{config.PORT}")
+    print(f"  interface={config.NETWORK_INTERFACE}  chain={config.CHAIN_FILE}  sim={'yes' if sim else 'no'}")
+    print()
 
     socketio.run(app, host=config.HOST, port=config.PORT, debug=config.DEBUG)

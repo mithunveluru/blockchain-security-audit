@@ -1,17 +1,10 @@
-"""
-Startup dependency and environment health check.
-Run before the application starts to catch missing requirements early.
-"""
-
 import sys
 import os
 import socket
 import importlib
 import subprocess
 from dataclasses import dataclass
-from typing import Optional
 
-# Packages that must be present for the app to function
 _REQUIRED_PACKAGES = ["flask", "flask_socketio", "eventlet", "numpy", "watchdog", "Crypto"]
 _CAPTURE_PACKAGES  = ["scapy"]
 
@@ -20,15 +13,14 @@ _CAPTURE_PACKAGES  = ["scapy"]
 class CheckResult:
     name: str
     ok: bool
-    version: Optional[str] = None
-    error: Optional[str] = None
-    note: Optional[str] = None
+    version: str | None = None
+    error: str | None = None
+    note: str | None = None
 
 
 def _check_import(module: str, pkg_name: str = "") -> CheckResult:
     try:
         mod = importlib.import_module(module)
-        # Prefer importlib.metadata for accurate version (avoids deprecation warnings)
         try:
             import importlib.metadata as _meta
             version = _meta.version(pkg_name or module.replace("_", "-"))
@@ -120,7 +112,6 @@ def check_interface(interface: str) -> CheckResult:
 
 
 def get_environment_info() -> dict:
-    """Detect the active Python environment (conda, venv, system)."""
     conda_env    = os.environ.get("CONDA_DEFAULT_ENV")
     conda_prefix = os.environ.get("CONDA_PREFIX")
     virtual_env  = os.environ.get("VIRTUAL_ENV")
@@ -155,11 +146,6 @@ def get_environment_info() -> dict:
 
 
 def check_interpreter_mismatch() -> CheckResult:
-    """
-    Detect when required packages exist in a different Python than the running one.
-    This catches the common 'sudo python3' problem where sudo uses /usr/bin/python3
-    while the project packages are in ~/miniconda3/bin/python.
-    """
     missing = []
     for pkg in _REQUIRED_PACKAGES + _CAPTURE_PACKAGES:
         try:
@@ -173,7 +159,6 @@ def check_interpreter_mismatch() -> CheckResult:
             note=f"All packages present in {sys.executable}",
         )
 
-    # Search known alternative Python locations for the missing packages
     candidates = []
     for path in [
         os.path.expanduser("~/miniconda3/bin/python"),

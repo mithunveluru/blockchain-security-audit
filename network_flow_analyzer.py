@@ -3,7 +3,6 @@
 import time
 from collections import defaultdict, deque
 from datetime import datetime
-from typing import Dict, List, Any, Tuple, Optional
 
 
 class NetworkFlowAnalyzer:
@@ -27,11 +26,9 @@ class NetworkFlowAnalyzer:
         self.port_scan_tracker = defaultdict(set)
         self.ddos_tracker = defaultdict(lambda: deque(maxlen=1000))
 
-        print("[Network Flow Analyzer] Initialized")
-        if ml_detector:
-            print("[Network Flow Analyzer] ML Detector: Enabled")
+        print("[Flow Analyzer] Initialized")
 
-    def create_flow(self, packet_data: Dict[str, Any]) -> Optional[str]:
+    def create_flow(self, packet_data: dict) -> str | None:
         try:
             src_ip = packet_data.get('src_ip', '0.0.0.0')
             dst_ip = packet_data.get('dst_ip', '0.0.0.0')
@@ -75,8 +72,7 @@ class NetworkFlowAnalyzer:
             print(f"[Warning] Flow creation error: {e}")
             return None
 
-    def _create_flow_key(self, src_ip: str, dst_ip: str, 
-                        src_port: int, dst_port: int, protocol: str) -> str:
+    def _create_flow_key(self, src_ip: str, dst_ip: str, src_port: int, dst_port: int, protocol: str) -> str:
         if src_ip < dst_ip or (src_ip == dst_ip and src_port < dst_port):
             return f"{src_ip}:{src_port}-{dst_ip}:{dst_port}-{protocol}"
         else:
@@ -88,7 +84,7 @@ class NetworkFlowAnalyzer:
         ddos_key = f"{dst_ip}:{dst_port}"
         self.ddos_tracker[ddos_key].append(time.time())
 
-    def analyze_flow(self, flow_key: str) -> Dict[str, Any]:
+    def analyze_flow(self, flow_key: str) -> dict:
         if flow_key not in self.flows:
             return {'error': 'Flow not found'}
 
@@ -170,7 +166,7 @@ class NetworkFlowAnalyzer:
             'anomaly_score': anomaly_score
         }
 
-    def _detect_port_scan(self, src_ip: str) -> Optional[Dict[str, Any]]:
+    def _detect_port_scan(self, src_ip: str) -> dict | None:
         ports_contacted = len(self.port_scan_tracker[src_ip])
 
         if ports_contacted >= self.port_scan_threshold:
@@ -184,7 +180,7 @@ class NetworkFlowAnalyzer:
 
         return None
 
-    def _detect_ddos(self, dst_ip: str, dst_port: int) -> Optional[Dict[str, Any]]:
+    def _detect_ddos(self, dst_ip: str, dst_port: int) -> dict | None:
         ddos_key = f"{dst_ip}:{dst_port}"
         timestamps = self.ddos_tracker[ddos_key]
 
@@ -206,7 +202,7 @@ class NetworkFlowAnalyzer:
 
         return None
 
-    def _detect_data_exfiltration(self, flow: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _detect_data_exfiltration(self, flow: dict) -> dict | None:
         if flow['byte_count'] > self.data_exfil_threshold:
             duration = flow['last_seen'] - flow['start_time']
             if duration < 60:
@@ -221,7 +217,7 @@ class NetworkFlowAnalyzer:
 
         return None
 
-    def _detect_brute_force(self, flow: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _detect_brute_force(self, flow: dict) -> dict | None:
         auth_ports = {22, 23, 3389, 21, 25, 110, 143}
 
         if flow['dst_port'] in auth_ports and flow['packet_count'] > 50:
@@ -254,7 +250,7 @@ class NetworkFlowAnalyzer:
 
         self.stats['active_flows'] = len(self.flows)
 
-    def get_network_intelligence(self) -> Dict[str, Any]:
+    def get_network_intelligence(self) -> dict:
         return {
             'total_flows': self.stats['total_flows'],
             'active_flows': self.stats['active_flows'],
@@ -268,51 +264,3 @@ class NetworkFlowAnalyzer:
         }
 
 
-if __name__ == "__main__":
-    print("="*70)
-    print("NETWORK FLOW ANALYZER - DEMONSTRATION")
-    print("="*70)
-
-    analyzer = NetworkFlowAnalyzer()
-
-    print("\n1. Normal traffic flow...")
-    for i in range(20):
-        packet = {
-            'src_ip': '192.168.1.100',
-            'dst_ip': '8.8.8.8',
-            'src_port': 50000 + i,
-            'dst_port': 443,
-            'protocol': 'TCP',
-            'size': 1500
-        }
-        flow_key = analyzer.create_flow(packet)
-        time.sleep(0.1)
-
-    print("\n2. Simulating port scan...")
-    for port in range(20, 50):
-        packet = {
-            'src_ip': '203.45.67.89',
-            'dst_ip': '192.168.1.100',
-            'src_port': 60000,
-            'dst_port': port,
-            'protocol': 'TCP',
-            'size': 64
-        }
-        flow_key = analyzer.create_flow(packet)
-
-    print("\n3. Analyzing flows...")
-    for flow_key in list(analyzer.flows.keys())[:3]:
-        analysis = analyzer.analyze_flow(flow_key)
-        print(f"\nFlow: {flow_key}")
-        print(f"  Malicious: {analysis['is_malicious']}")
-        print(f"  Threat Level: {analysis['threat_level']}")
-        print(f"  Threats: {len(analysis['threats_detected'])}")
-        for threat in analysis['threats_detected']:
-            print(f"    - {threat['type']}: {threat['description']}")
-
-    intel = analyzer.get_network_intelligence()
-    print("\n" + "="*70)
-    print("NETWORK INTELLIGENCE:")
-    for key, value in intel.items():
-        print(f"  {key}: {value}")
-    print("="*70)
