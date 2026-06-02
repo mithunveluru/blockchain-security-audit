@@ -149,7 +149,7 @@ class IntegrityMonitor:
                 )
                 forensics['severity'] = 'CRITICAL'
             elif len(current_chain) > len(self.last_valid_chain):
-                added_count = len(current_chain) - len(self.last_valid_chain)
+                # New blocks added legitimately — no tampering concern, chain will be verified below
                 pass
 
         for i in range(1, len(current_chain)):

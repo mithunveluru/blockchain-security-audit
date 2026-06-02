@@ -7,16 +7,20 @@ class AdaptiveMerkleTree:
         self.leaves = []
         self.tree = []
         self.access_freq = defaultdict(int)
-    
+
     def add_leaf(self, data, hashed=True):
         if hashed:
             data = hashlib.sha256(data.encode()).hexdigest()
         self.leaves.append(data)
-    
+
     def build(self):
+        if not self.leaves:
+            self.tree = []
+            return
+
         curr_layer = self.leaves[:]
-        layers = []
-        
+        layers = [curr_layer]
+
         while len(curr_layer) > 1:
             next_layer = []
             i = 0
@@ -28,32 +32,49 @@ class AdaptiveMerkleTree:
                 i += 2
             layers.append(next_layer)
             curr_layer = next_layer
-        
+
         self.tree = layers
-    
+
     def optimize(self):
-        freq_heap = [(count, idx) for idx, count in self.access_freq.items()]
+        # Sort by descending access frequency so most-used leaves are near root
+        freq_heap = [(-count, idx) for idx, count in self.access_freq.items()]
         heapq.heapify(freq_heap)
-        reordered = [self.leaves[idx] for count, idx in freq_heap]
+        reordered = [self.leaves[idx] for neg_count, idx in freq_heap]
         self.leaves = reordered
         self.build()
-    
+
     def get_proof(self, idx):
+        """Returns list of (sibling_hash, is_current_left) tuples for verification."""
+        if not self.tree:
+            return []
+
         path = []
         pos = idx
-        
-        for level in self.tree:
+
+        # tree[0] is leaves; tree[1..n-1] are internal levels; tree[-1] is root
+        for level_idx in range(len(self.tree) - 1):
+            level = self.tree[level_idx]
             sibling_pos = pos ^ 1
+            is_left = (pos % 2 == 0)
             if sibling_pos < len(level):
-                path.append(level[sibling_pos])
+                path.append((level[sibling_pos], is_left))
             pos //= 2
-        
+
         return path
-    
+
+    def get_root(self):
+        if not self.tree:
+            return None
+        return self.tree[-1][0] if self.tree[-1] else None
+
     def verify(self, leaf, path, root):
+        """path must be list of (sibling_hash, is_current_left) tuples from get_proof()."""
         h = leaf
-        for sib in path:
-            h = hashlib.sha256((h + sib).encode()).hexdigest()
+        for sib, is_left in path:
+            if is_left:
+                h = hashlib.sha256((h + sib).encode()).hexdigest()
+            else:
+                h = hashlib.sha256((sib + h).encode()).hexdigest()
         return h == root
 
 
@@ -69,8 +90,8 @@ if __name__ == "__main__":
         mt.add_leaf(tx)
     
     mt.build()
-    
-    root = mt.tree[-1][0] if mt.tree else None
+
+    root = mt.get_root()
     print(f"Merkle root: {root}")
     
     proof_path = mt.get_proof(2)

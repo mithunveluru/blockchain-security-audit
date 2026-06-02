@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import sys
 import time
 import json
 import hashlib
@@ -10,7 +11,9 @@ from datetime import datetime
 from collections import deque
 from flask import Flask, render_template_string, jsonify, request, send_from_directory
 from flask_socketio import SocketIO, emit
+from config import config
 from integrity_monitor import IntegrityMonitor
+from health.dependency_check import run_all as _run_dep_checks, print_report as _print_dep_report
 
 try:
     from adaptive_merkle_tree import AdaptiveMerkleTree
@@ -18,16 +21,20 @@ try:
     from network_packet_analyzer import NetworkPacketAnalyzer
     from network_flow_analyzer import NetworkFlowAnalyzer
     MODULES_AVAILABLE = True
-except ImportError:
-    print("[Warning] Some modules not found. Using simplified mode.")
+except ImportError as _module_err:
+    print(f"\n[FATAL] Failed to import required module: {_module_err}", file=sys.stderr)
+    print("  Hint: run the dependency check — python health/dependency_check.py", file=sys.stderr)
+    print("  Or enable simulation mode: ENABLE_SIMULATION_MODE=1 python enhanced_network_app.py\n", file=sys.stderr)
     MODULES_AVAILABLE = False
+    if not config.ENABLE_SIMULATION_MODE:
+        sys.exit(1)
 
-CHAIN_FILE = "network_blockchain.json"
+CHAIN_FILE = config.CHAIN_FILE
 MONITOR_INTERVAL = 0.01
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'network-security-blockchain-2025'
-socketio = SocketIO(app, cors_allowed_origins="*")
+app.config['SECRET_KEY'] = config.SECRET_KEY
+socketio = SocketIO(app, cors_allowed_origins=config.CORS_ORIGINS)
 
 
 class NetworkBlockchain:
@@ -78,11 +85,10 @@ class NetworkBlockchain:
         self.chain.append(new_block)
 
         if self.merkle_tree:
-            self.merkle_tree.add_leaf(new_block['hash'], do_hash=False)
-            self.merkle_tree.make_tree()
+            self.merkle_tree.add_leaf(new_block['hash'], hashed=False)
+            self.merkle_tree.build()
 
-        if len(self.chain) % 10 == 0:
-            self.save_chain()
+        self.save_chain()
 
         return new_block
 
@@ -107,6 +113,9 @@ class NetworkBlockchain:
         with open(self.chain_file, 'r') as f:
             self.chain = json.load(f)
         print(f"[Blockchain] Loaded {len(self.chain)} blocks")
+        valid, msg = self.verify_chain()
+        if not valid:
+            print(f"[Blockchain] WARNING: Loaded chain failed integrity check: {msg}")
 
 
 class NetworkSecuritySystem:
@@ -120,9 +129,9 @@ class NetworkSecuritySystem:
         )
 
         if MODULES_AVAILABLE:
-            self.ml_detector = MLAnomalyDetector(learning_window_days=7)
+            self.ml_detector = MLAnomalyDetector(learning_window_days=config.ML_LEARNING_WINDOW_DAYS)
             self.packet_analyzer = NetworkPacketAnalyzer(
-                interface='wlp0s20f3',
+                interface=config.NETWORK_INTERFACE,
                 ml_detector=self.ml_detector
             )
             self.flow_analyzer = NetworkFlowAnalyzer(ml_detector=self.ml_detector)
@@ -303,16 +312,27 @@ class NetworkSecuritySystem:
 
     def _emit_dashboard_update(self):
         try:
+            network_stats = {}
+            if self.packet_analyzer:
+                pkt_stats = self.packet_analyzer.get_statistics()
+                network_stats = {
+                    'protocol_distribution': pkt_stats.get('protocol_distribution', {}),
+                    'top_ports': pkt_stats.get('top_ports', []),
+                    'top_talkers': pkt_stats.get('top_talkers', []),
+                }
+
             update_data = {
                 'stats': self.stats,
                 'recent_events': list(self.recent_events)[-10:],
                 'recent_threats': list(self.recent_threats)[-5:],
+                'network_stats': network_stats,
+                'capture_status': self.packet_analyzer.get_capture_status() if self.packet_analyzer else {'status': 'unavailable'},
                 'timestamp': datetime.now().isoformat()
             }
 
             socketio.emit('dashboard_update', update_data)
         except Exception as e:
-            pass
+            print(f"[Error] Dashboard emit failed: {e}")
 
 
 network_system = NetworkSecuritySystem()
@@ -353,6 +373,88 @@ def get_integrity_alerts():
     return jsonify(network_system.integrity_monitor.alerts)
 
 
+@app.route('/api/health')
+def get_health():
+    from health.dependency_check import get_environment_info
+    from network_packet_analyzer import get_permissions_info, SCAPY_AVAILABLE, _SCAPY_VERSION
+
+    capture_status = (
+        network_system.packet_analyzer.get_capture_status()
+        if network_system.packet_analyzer else {
+            'status': 'scapy_missing', 'mode': 'none', 'interface': config.NETWORK_INTERFACE,
+            'scapy_available': False, 'scapy_version': None, 'error': 'Modules not loaded', 'fix': None,
+        }
+    )
+
+    perms = get_permissions_info()
+    env   = get_environment_info()
+    bc_valid, bc_msg = network_system.blockchain.verify_chain()
+
+    # Derive actionable fix for permissions
+    python_real = os.path.realpath(sys.executable)
+    setcap_cmd  = f"sudo /usr/sbin/setcap cap_net_raw,cap_net_admin=eip {python_real}"
+    sudo_cmd    = f"sudo {python_real} enhanced_network_app.py"
+
+    overall = 'ok'
+    if capture_status.get('status') in ('permission_denied', 'interface_missing', 'scapy_missing', 'capture_failed'):
+        overall = 'degraded'
+    if not bc_valid:
+        overall = 'critical'
+
+    return jsonify({
+        'status': overall,
+        'capture': capture_status,
+        'blockchain': {
+            'blocks': len(network_system.blockchain.chain),
+            'valid': bc_valid,
+            'message': bc_msg,
+        },
+        'dependencies': {
+            'flask':        True,
+            'scapy':        SCAPY_AVAILABLE,
+            'scapy_version': _SCAPY_VERSION,
+            'numpy':        _dep_ok('numpy'),
+            'watchdog':     _dep_ok('watchdog'),
+            'flask_socketio': _dep_ok('flask_socketio'),
+        },
+        'permissions': perms,
+        'environment': {
+            'python':           env['python_executable'],
+            'python_real':      env['python_real_path'],
+            'python_version':   env['python_version'],
+            'env_type':         env['env_type'],
+            'env_name':         env['env_name'],
+            'conda_env':        env['conda_env'],
+            'virtual_env':      env['virtual_env'],
+            'user':             env['user'],
+            'uid':              env['uid'],
+            'working_dir':      env['working_dir'],
+            'interface':        config.NETWORK_INTERFACE,
+            'simulation_mode':  config.ENABLE_SIMULATION_MODE,
+        },
+        'system': {
+            'running':          network_system.running,
+            'uptime_hours':     round(network_system.stats.get('uptime_hours', 0), 3),
+            'threats_detected': network_system.stats.get('threats_detected', 0),
+            'blockchain_blocks': len(network_system.blockchain.chain),
+        },
+        'fix_commands': {
+            'setcap':   setcap_cmd,
+            'sudo_run': sudo_cmd,
+            'sim_mode': 'ENABLE_SIMULATION_MODE=true python enhanced_network_app.py',
+            'run_sh':   './run.sh',
+        },
+    })
+
+
+def _dep_ok(module: str) -> bool:
+    try:
+        __import__(module)
+        return True
+    except ImportError:
+        return False
+
+
 @app.route('/api/start', methods=['POST'])
 def start_monitoring():
     network_system.start()
@@ -376,15 +478,23 @@ def get_whitelist():
 
 @app.route('/api/whitelist/add', methods=['POST'])
 def add_to_whitelist():
-    data = request.json
-    ip_or_cidr = data.get('ip')
+    data = request.json or {}
+    ip_or_cidr = data.get('ip', '').strip()
 
-    if ip_or_cidr:
-        network_system.whitelist.add(ip_or_cidr)
-        print(f"[Whitelist] Added {ip_or_cidr}")
-        return jsonify({'status': 'added', 'ip': ip_or_cidr})
+    if not ip_or_cidr:
+        return jsonify({'error': 'ip field required'}), 400
 
-    return jsonify({'error': 'Invalid IP'}), 400
+    try:
+        if '/' in ip_or_cidr:
+            ipaddress.ip_network(ip_or_cidr, strict=False)
+        else:
+            ipaddress.ip_address(ip_or_cidr)
+    except ValueError:
+        return jsonify({'error': f'Invalid IP address or CIDR: {ip_or_cidr}'}), 400
+
+    network_system.whitelist.add(ip_or_cidr)
+    print(f"[Whitelist] Added {ip_or_cidr}")
+    return jsonify({'status': 'added', 'ip': ip_or_cidr})
 
 
 @app.route('/api/whitelist/remove', methods=['POST'])
@@ -432,29 +542,123 @@ def soc_assets(path):
 
 
 if __name__ == '__main__':
-    print("="*70)
+    print("=" * 70)
     print("NETWORK SECURITY BLOCKCHAIN AUDIT SYSTEM")
-    print("="*70)
-    print("\nStarting system components...\n")
+    print("=" * 70)
 
+    # Run dependency and environment health check
+    dep_results = _run_dep_checks(
+        interface=config.NETWORK_INTERFACE,
+        chain_file=config.CHAIN_FILE,
+    )
+    all_ok = _print_dep_report(dep_results, fail_on_errors=False)
+
+    if not all_ok and not config.ENABLE_SIMULATION_MODE:
+        # Raw socket failure is non-fatal — user can still start, but capture will fail
+        # Only hard-fail if scapy itself is missing
+        scapy_result = next((r for r in dep_results if r.name == "scapy"), None)
+        if scapy_result and not scapy_result.ok:
+            print("[FATAL] Scapy not available. Cannot start packet capture.", file=sys.stderr)
+            print("  Set ENABLE_SIMULATION_MODE=1 to run in simulation mode.", file=sys.stderr)
+            sys.exit(1)
+
+    for warning in config.validate():
+        print(f"[Config Warning] {warning}")
+
+    if config.ENABLE_SIMULATION_MODE:
+        print("[Network] Running in SIMULATION MODE (ENABLE_SIMULATION_MODE=1)")
+    else:
+        raw_socket_result = next((r for r in dep_results if r.name == "raw_socket_permission"), None)
+        if raw_socket_result and not raw_socket_result.ok:
+            print("\n[WARNING] Raw socket permission denied. Packet capture will fail.")
+            print("  Run with:  sudo python enhanced_network_app.py")
+            print(f"  Or grant:  sudo setcap cap_net_raw+eip {sys.executable}\n")
+
+    # ── ENVIRONMENT + CAPTURE PREFLIGHT DIAGNOSTICS ───────────────────────────
+    print("\n" + "=" * 70)
+    print("ENVIRONMENT & CAPTURE DIAGNOSTICS")
+    print("=" * 70)
+    try:
+        from network_packet_analyzer import get_permissions_info, get_available_interfaces, SCAPY_AVAILABLE, _SCAPY_VERSION
+        from health.dependency_check import get_environment_info
+        _env   = get_environment_info()
+        _perms = get_permissions_info()
+        _ifaces = get_available_interfaces()
+        _iface = config.NETWORK_INTERFACE
+        _iface_exists = _iface in _ifaces
+        _python_real = os.path.realpath(sys.executable)
+
+        print(f"  Python     : {_env['python_executable']}")
+        print(f"  Real path  : {_python_real}")
+        print(f"  Version    : {_env['python_version']}")
+        print(f"  Environment: {_env['env_type']} / {_env['env_name']}")
+        if _env['conda_env']:
+            print(f"  Conda env  : {_env['conda_env']}")
+        if _env['virtual_env']:
+            print(f"  Venv       : {_env['virtual_env']}")
+        print(f"  User       : {_env['user']} (uid={_env['uid']})")
+        print(f"  Work dir   : {_env['working_dir']}")
+        print()
+        print(f"  Interface  : {_iface} ({'FOUND' if _iface_exists else 'NOT FOUND'})")
+        if not _iface_exists:
+            print(f"    Available : {', '.join(_ifaces) or 'none'}")
+            print(f"    Fix       : NETWORK_INTERFACE=<name> ./run.sh")
+        print(f"  Scapy      : {'available (' + _SCAPY_VERSION + ')' if SCAPY_AVAILABLE else 'NOT AVAILABLE'}")
+        if not SCAPY_AVAILABLE:
+            print(f"    Fix: {_python_real} -m pip install scapy")
+        print()
+        print(f"  is_root    : {_perms['is_root']}")
+        print(f"  cap_net_raw: {_perms['cap_net_raw']}")
+        print(f"  cap_net_adm: {_perms['cap_net_admin']}")
+        print(f"  raw_socket : {_perms['raw_socket']}")
+        print(f"  can_capture: {_perms['can_capture']}")
+
+        if not _perms['can_capture'] and not config.ENABLE_SIMULATION_MODE:
+            print()
+            print("  [ACTION REQUIRED] No raw socket permission. Choose one:")
+            print()
+            print(f"  Option 1 — setcap (recommended, run once):")
+            print(f"    sudo /usr/sbin/setcap cap_net_raw,cap_net_admin=eip {_python_real}")
+            print(f"    Then: python {sys.argv[0]}")
+            print()
+            print(f"  Option 2 — sudo with correct interpreter:")
+            print(f"    sudo {_python_real} {sys.argv[0]}")
+            print()
+            print(f"  Option 3 — auto-handled launcher:")
+            print(f"    ./run.sh")
+            print()
+            print(f"  Option 4 — simulation mode (no real capture):")
+            print(f"    ENABLE_SIMULATION_MODE=true python {sys.argv[0]}")
+        elif config.ENABLE_SIMULATION_MODE:
+            print()
+            print("  [SIMULATION MODE] Real packet capture is disabled.")
+            print("  To enable live capture, remove ENABLE_SIMULATION_MODE and run:")
+            print(f"    sudo /usr/sbin/setcap cap_net_raw,cap_net_admin=eip {_python_real}")
+            print(f"    python {sys.argv[0]}")
+    except Exception as _diag_err:
+        print(f"  [Diagnostics unavailable: {_diag_err}]")
+        import traceback; traceback.print_exc()
+    print("=" * 70)
+
+    print("\nStarting system components...\n")
     network_system.start()
 
-    print("\nSystem ready!\n")
-    print("\nDashboards:")
-    print("   • http://localhost:5000/          - Original Dashboard")
-    print("   • http://localhost:5000/soc       - Professional SOC Dashboard")
-    print("\nAPI Endpoints:")
-    print("   • GET  /api/stats                 - Get statistics")
-    print("   • GET  /api/blockchain/verify     - Verify blockchain")
-    print("   • GET  /api/integrity/status      - Integrity monitor status")
-    print("   • GET  /api/integrity/alerts      - All integrity alerts")
-    print("   • POST /api/start                 - Start monitoring")
-    print("   • POST /api/stop                  - Stop monitoring")
-    print("\nWhitelist Management:")
-    print("   • GET  /api/whitelist             - Get whitelist entries")
-    print("   • POST /api/whitelist/add         - Add IP to whitelist")
-    print("   • POST /api/whitelist/remove      - Remove IP from whitelist")
-    print("   • POST /api/whitelist/toggle      - Enable/disable whitelist")
-    print("\n" + "="*70)
+    print("\nSystem ready!")
+    print(f"  Interface : {config.NETWORK_INTERFACE}")
+    print(f"  Chain file: {config.CHAIN_FILE}")
+    print(f"  Simulation: {'YES' if config.ENABLE_SIMULATION_MODE else 'NO (live capture)'}")
+    print(f"\nDashboards:")
+    print(f"   http://localhost:{config.PORT}/        - Original Dashboard")
+    print(f"   http://localhost:{config.PORT}/soc     - Professional SOC Dashboard")
+    print(f"\nAPI Endpoints:")
+    print(f"   GET  /api/stats                 - Statistics")
+    print(f"   GET  /api/blockchain/verify     - Verify blockchain")
+    print(f"   GET  /api/integrity/status      - Integrity monitor status")
+    print(f"   POST /api/start                 - Start monitoring")
+    print(f"   POST /api/stop                  - Stop monitoring")
+    print(f"   GET  /api/whitelist             - Whitelist entries")
+    print(f"   POST /api/whitelist/add         - Add IP/CIDR to whitelist")
+    print(f"   GET  /api/health                - System health + capture status")
+    print("=" * 70 + "\n")
 
-    socketio.run(app, host='0.0.0.0', port=5000, debug=False)
+    socketio.run(app, host=config.HOST, port=config.PORT, debug=config.DEBUG)

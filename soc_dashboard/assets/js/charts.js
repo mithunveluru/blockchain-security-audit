@@ -1,207 +1,209 @@
-let threatTimelineChart, threatDistChart, healthChart, protocolChart;
-const chartColors = {
-    accent: '#0ea5e9',
-    accent2: '#06b6d4',
-    danger: '#ef4444',
-    warning: '#f59e0b',
-    success: '#10b981',
-    border: '#334155'
-};
+// ── SOC chart instances ───────────────────────────────────────────────────
+const socCharts = { timeline: null, protocol: null, dist: null, health: null };
 
-function initCharts() {
-    const ctxTimeline = document.getElementById('threatTimeline')?.getContext('2d');
-    if (ctxTimeline) {
-        threatTimelineChart = new Chart(ctxTimeline, {
-            type: 'line',
-            data: {
-                labels: [],
-                datasets: [{
-                    label: 'Threats Detected',
-                    data: [],
-                    borderColor: chartColors.danger,
-                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                    borderWidth: 3,
-                    fill: true,
-                    tension: 0.4,
-                    pointRadius: 6,
-                    pointBackgroundColor: chartColors.danger,
-                    pointBorderColor: '#fff',
-                    pointBorderWidth: 2
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: true,
-                plugins: {
-                    legend: { display: false }
-                },
-                scales: {
-                    y: {
-                        ticks: { color: chartColors.border },
-                        grid: { color: 'rgba(51, 65, 85, 0.2)' },
-                        beginAtZero: true
-                    },
-                    x: {
-                        ticks: { color: chartColors.border },
-                        grid: { color: 'rgba(51, 65, 85, 0.1)' }
-                    }
-                }
-            }
-        });
-    }
-
-    const ctxDist = document.getElementById('threatDistribution')?.getContext('2d');
-    if (ctxDist) {
-        threatDistChart = new Chart(ctxDist, {
-            type: 'doughnut',
-            data: {
-                labels: ['Port Scan', 'DDoS', 'Brute Force', 'Anomaly', 'Clean'],
-                datasets: [{
-                    data: [0, 0, 0, 0, 100],
-                    backgroundColor: [
-                        'rgba(239, 68, 68, 0.8)',
-                        'rgba(245, 158, 11, 0.8)',
-                        'rgba(251, 191, 36, 0.8)',
-                        'rgba(59, 130, 246, 0.8)',
-                        'rgba(51, 65, 85, 0.5)'
-                    ],
-                    borderColor: '#1e293b',
-                    borderWidth: 2
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: true,
-                plugins: {
-                    legend: {
-                        position: 'bottom',
-                        labels: { color: chartColors.border, font: { size: 12 } }
-                    }
-                }
-            }
-        });
-    }
-
-    const ctxHealth = document.getElementById('networkHealth')?.getContext('2d');
-    if (ctxHealth) {
-        healthChart = new Chart(ctxHealth, {
-            type: 'radar',
-            data: {
-                labels: ['Availability', 'Security', 'Performance', 'Integrity', 'Response Time'],
-                datasets: [{
-                    label: 'Health Score',
-                    data: [95, 88, 92, 100, 90],
-                    borderColor: chartColors.success,
-                    backgroundColor: 'rgba(16, 185, 129, 0.2)',
-                    pointBackgroundColor: chartColors.success,
-                    pointBorderColor: '#fff',
-                    pointBorderWidth: 2
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: true,
-                plugins: {
-                    legend: { labels: { color: chartColors.border } }
-                },
-                scales: {
-                    r: {
-                        grid: { color: 'rgba(51, 65, 85, 0.3)' },
-                        ticks: { color: chartColors.border }
-                    }
-                }
-            }
-        });
-    }
-
-    const ctxProtocol = document.getElementById('protocolDist')?.getContext('2d');
-    if (ctxProtocol) {
-        protocolChart = new Chart(ctxProtocol, {
-            type: 'bar',
-            data: {
-                labels: ['TCP', 'UDP', 'ICMP', 'HTTP', 'HTTPS'],
-                datasets: [{
-                    label: 'Packets',
-                    data: [1200, 900, 300, 1500, 2100],
-                    backgroundColor: [
-                        chartColors.accent,
-                        chartColors.accent2,
-                        chartColors.danger,
-                        chartColors.warning,
-                        chartColors.success
-                    ],
-                    borderRadius: 6
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: true,
-                plugins: { legend: { display: false } },
-                scales: {
-                    y: {
-                        ticks: { color: chartColors.border },
-                        grid: { color: 'rgba(51, 65, 85, 0.2)' }
-                    },
-                    x: {
-                        ticks: { color: chartColors.border },
-                        grid: { display: false }
-                    }
-                }
-            }
-        });
-    }
+function chartPalette() {
+  return {
+    text:   '#768390',
+    grid:   'rgba(48,54,61,.5)',
+    blue:   '#388bfd',
+    red:    '#f85149',
+    green:  '#3fb950',
+    amber:  '#d29922',
+    orange: '#f78166',
+    cyan:   '#39c5cf',
+    gray:   '#30363d',
+  };
 }
 
-function updateAllCharts(data) {
-    if (!data.stats) return;
-
-    if (threatTimelineChart) {
-        const now = new Date().toLocaleTimeString();
-        threatTimelineChart.data.labels.push(now);
-        threatTimelineChart.data.datasets[0].data.push(data.stats.threats_detected || 0);
-        
-        if (threatTimelineChart.data.labels.length > 24) {
-            threatTimelineChart.data.labels.shift();
-            threatTimelineChart.data.datasets[0].data.shift();
-        }
-        threatTimelineChart.update('none');
-    }
-
-    if (threatDistChart && data.recent_threats) {
-        const counts = { PORT_SCAN: 0, DDOS_ATTACK: 0, BRUTE_FORCE: 0, ANOMALY: 0, CLEAN: 100 };
-        data.recent_threats.forEach(t => {
-            t.threats?.forEach(threat => {
-                counts[threat.type] = (counts[threat.type] || 0) + 1;
-            });
-        });
-        
-        const total = Object.values(counts).reduce((a, b) => a + b, 0) || 1;
-        threatDistChart.data.datasets[0].data = [
-            (counts.PORT_SCAN / total) * 100,
-            (counts.DDOS_ATTACK / total) * 100,
-            (counts.BRUTE_FORCE / total) * 100,
-            (counts.ANOMALY / total) * 100,
-            (counts.CLEAN / total) * 100
-        ];
-        threatDistChart.update('none');
-    }
-
-    updatePortHeatmap();
+// ── Timeline ──────────────────────────────────────────────────────────────
+function initTimelineChart() {
+  const canvas = document.getElementById('timelineCanvas');
+  if (!canvas || socCharts.timeline) return;
+  const c = chartPalette();
+  socCharts.timeline = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'Threats',
+        data: [],
+        borderColor: c.red,
+        backgroundColor: 'rgba(248,81,73,.07)',
+        borderWidth: 1.5,
+        fill: true,
+        tension: 0.35,
+        pointRadius: 2.5,
+        pointBackgroundColor: c.red,
+        pointHoverRadius: 5,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { beginAtZero: true, ticks: { color: c.text, font: { size: 11 } }, grid: { color: c.grid } },
+        x: { ticks: { color: c.text, font: { size: 11 }, maxTicksLimit: 12 }, grid: { display: false } },
+      },
+    },
+  });
 }
 
-function updatePortHeatmap() {
-    const heatmap = document.getElementById('portHeatmap');
-    if (!heatmap) return;
-
-    const ports = [80, 443, 22, 3389, 53, 3306, 5432, 8080];
-    heatmap.innerHTML = ports.map((port, i) => {
-        const value = Math.random() * 100;
-        return `<div class="port-bar" style="height: ${30 + (value / 100) * 70}px; opacity: ${0.5 + (value / 200)}">
-            <div style="font-size: 8px; margin-top: 4px;">${port}</div>
-        </div>`;
-    }).join('');
+function updateTimelineChart(data) {
+  if (!socCharts.timeline || !data.stats) return;
+  const now = new Date().toLocaleTimeString('en-US', { hour12: false });
+  socCharts.timeline.data.labels.push(now);
+  socCharts.timeline.data.datasets[0].data.push(data.stats.threats_detected || 0);
+  if (socCharts.timeline.data.labels.length > 30) {
+    socCharts.timeline.data.labels.shift();
+    socCharts.timeline.data.datasets[0].data.shift();
+  }
+  socCharts.timeline.update('none');
 }
 
-document.addEventListener('DOMContentLoaded', initCharts);
-window.updateAllCharts = updateAllCharts;
+// ── Network charts ────────────────────────────────────────────────────────
+function initNetworkCharts() {
+  const c = chartPalette();
 
+  const ctxP = document.getElementById('protocolCanvas')?.getContext('2d');
+  if (ctxP && !socCharts.protocol) {
+    socCharts.protocol = new Chart(ctxP, {
+      type: 'bar',
+      data: {
+        labels: ['TCP','UDP','ICMP','HTTP','HTTPS'],
+        datasets: [{ label: 'Packets', data: [0,0,0,0,0], backgroundColor: [c.blue, c.cyan, c.amber, c.orange, c.green], borderRadius: 3 }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { beginAtZero: true, ticks: { color: c.text, font: { size: 11 } }, grid: { color: c.grid } },
+          x: { ticks: { color: c.text, font: { size: 11 } }, grid: { display: false } },
+        },
+      },
+    });
+  }
+
+  const ctxD = document.getElementById('distCanvas')?.getContext('2d');
+  if (ctxD && !socCharts.dist) {
+    socCharts.dist = new Chart(ctxD, {
+      type: 'doughnut',
+      data: {
+        labels: ['Port Scan','DDoS','Brute Force','Anomaly','Clean'],
+        datasets: [{ data: [0,0,0,0,100], backgroundColor: [c.red, c.orange, c.amber, c.blue, c.gray], borderWidth: 0, hoverOffset: 4 }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom', labels: { color: c.text, font: { size: 11 }, padding: 12, boxWidth: 10 } } },
+      },
+    });
+  }
+
+  const ctxH = document.getElementById('healthCanvas')?.getContext('2d');
+  if (ctxH && !socCharts.health) {
+    socCharts.health = new Chart(ctxH, {
+      type: 'radar',
+      data: {
+        labels: ['Availability','Security','Performance','Integrity','Response'],
+        datasets: [{
+          label: 'Health',
+          data: [95,88,92,100,90],
+          borderColor: c.green,
+          backgroundColor: 'rgba(63,185,80,.1)',
+          pointBackgroundColor: c.green,
+          borderWidth: 1.5,
+          pointRadius: 3,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { r: {
+          ticks: { display: false },
+          grid: { color: c.grid },
+          angleLines: { color: c.grid },
+          pointLabels: { color: c.text, font: { size: 10 } },
+          suggestedMin: 0, suggestedMax: 100,
+        }},
+      },
+    });
+  }
+}
+
+// ── Network chart updates ─────────────────────────────────────────────────
+function updateNetworkCharts(data) {
+  const intBroken = typeof state !== 'undefined' ? state.intBroken : false;
+
+  if (socCharts.protocol && data.network_stats?.protocol_distribution) {
+    const dist = data.network_stats.protocol_distribution;
+    socCharts.protocol.data.labels = Object.keys(dist);
+    socCharts.protocol.data.datasets[0].data = Object.values(dist);
+    socCharts.protocol.update('none');
+  }
+
+  if (socCharts.dist && data.recent_threats) {
+    const counts = { PORT_SCAN: 0, DDOS_ATTACK: 0, BRUTE_FORCE: 0, ANOMALY: 0, CLEAN: 0 };
+    data.recent_threats.forEach(t => {
+      (t.threats || []).forEach(th => {
+        const k = Object.prototype.hasOwnProperty.call(counts, th.type) ? th.type : 'ANOMALY';
+        counts[k]++;
+      });
+    });
+    const det = Object.values(counts).reduce((a,b) => a+b, 0);
+    counts.CLEAN = det > 0 ? 0 : 100;
+    const total = Object.values(counts).reduce((a,b) => a+b, 0) || 1;
+    socCharts.dist.data.datasets[0].data = [
+      (counts.PORT_SCAN   / total) * 100,
+      (counts.DDOS_ATTACK / total) * 100,
+      (counts.BRUTE_FORCE / total) * 100,
+      (counts.ANOMALY     / total) * 100,
+      (counts.CLEAN       / total) * 100,
+    ];
+    socCharts.dist.update('none');
+  }
+
+  if (socCharts.health && data.stats) {
+    const t   = data.stats.threats_detected || 0;
+    const p   = data.stats.packets_analyzed || 0;
+    const sec = p > 0 ? Math.max(0, 100 - (t / p) * 1000) : 100;
+    socCharts.health.data.datasets[0].data = [
+      Math.min(100, 90 + Math.random() * 10),
+      Math.min(100, sec),
+      Math.min(100, 85 + Math.random() * 15),
+      intBroken ? 10 : 100,
+      Math.min(100, 88 + Math.random() * 12),
+    ];
+    socCharts.health.update('none');
+  }
+
+  updatePortBars(data.network_stats?.top_ports);
+}
+
+// ── Port bars ─────────────────────────────────────────────────────────────
+function updatePortBars(topPorts) {
+  const container = document.getElementById('portBars');
+  if (!container) return;
+  let ports;
+  if (topPorts && topPorts.length > 0) {
+    const maxC = topPorts[0][1] || 1;
+    ports = topPorts.slice(0, 10).map(([p, c]) => ({ port: p, pct: (c / maxC) * 100 }));
+  } else {
+    ports = [80,443,22,3389,53,3306,5432,8080,8443,21].map(p => ({ port: p, pct: 0 }));
+  }
+  container.innerHTML = ports.map(({ port, pct }) => {
+    const h  = Math.max(8, (pct / 100) * 90);
+    const op = 0.35 + (pct / 200);
+    return `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex:1;min-width:0">
+      <div style="font-size:9px;color:var(--text-3);font-weight:500">${pct > 0 ? Math.round(pct) + '%' : ''}</div>
+      <div style="width:100%;height:${h}px;background:var(--blue);border-radius:3px 3px 0 0;opacity:${op}"></div>
+      <div style="font-size:9px;color:var(--text-3);font-variant-numeric:tabular-nums;white-space:nowrap">${port}</div>
+    </div>`;
+  }).join('');
+}
+
+// ── Expose for switchView ─────────────────────────────────────────────────
+window.initTimelineChart   = initTimelineChart;
+window.initNetworkCharts   = initNetworkCharts;
+window.updateNetworkCharts = updateNetworkCharts;
+window.updateTimelineChart = updateTimelineChart;

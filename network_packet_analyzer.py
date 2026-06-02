@@ -1,21 +1,128 @@
 #!/usr/bin/env python3
 
+import os
+import sys
 import socket
-import struct
 import time
 import json
 from datetime import datetime
 from collections import defaultdict, deque
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Optional
 import threading
 import hashlib
+
+# ── Capture status constants ──────────────────────────────────────────────────
+CAPTURE_IDLE       = "idle"
+CAPTURE_STARTING   = "starting"
+CAPTURE_RUNNING    = "capture_running"
+CAPTURE_SIMULATION = "simulation"
+CAPTURE_STOPPED    = "capture_stopped"
+CAPTURE_PERM_DENIED  = "permission_denied"
+CAPTURE_IFACE_MISSING = "interface_missing"
+CAPTURE_SCAPY_MISSING = "scapy_missing"
+CAPTURE_FAILED     = "capture_failed"
+
+_SIMULATION_EXPLICITLY_ENABLED = os.environ.get("ENABLE_SIMULATION_MODE", "").lower() in ("1", "true")
 
 try:
     import scapy.all as scapy
     SCAPY_AVAILABLE = True
-except ImportError:
+    _SCAPY_VERSION = scapy.VERSION if hasattr(scapy, "VERSION") else "unknown"
+except ImportError as _scapy_import_error:
     SCAPY_AVAILABLE = False
-    print("[Warning] Scapy not available. Using simulated packet capture.")
+    _SCAPY_VERSION = None
+    _scapy_error_detail = (
+        f"\n  [SCAPY IMPORT FAILED]\n"
+        f"  Reason   : {_scapy_import_error}\n"
+        f"  Python   : {sys.executable}\n"
+        f"  Version  : {sys.version.split()[0]}\n"
+        f"  sys.path : {[p for p in sys.path if 'site-packages' in p]}\n\n"
+        f"  Fix: {sys.executable} -m pip install scapy\n"
+        f"  Or:  ENABLE_SIMULATION_MODE=true python enhanced_network_app.py\n"
+    )
+    if not _SIMULATION_EXPLICITLY_ENABLED:
+        print(_scapy_error_detail, file=sys.stderr)
+        raise ImportError(
+            "Scapy is required for live packet capture. "
+            "Set ENABLE_SIMULATION_MODE=true to use simulation mode.\n"
+            + _scapy_error_detail
+        ) from _scapy_import_error
+    print(f"[Network Analyzer] WARNING: Scapy unavailable — simulation mode active.")
+    print(f"  Reason: {_scapy_import_error}")
+
+
+def _check_cap_net_raw() -> bool:
+    """Check CAP_NET_RAW in effective capabilities via /proc/self/status."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("CapEff:"):
+                    cap_hex = int(line.split()[1], 16)
+                    return bool(cap_hex & (1 << 13))  # CAP_NET_RAW = bit 13
+    except Exception:
+        pass
+    return False
+
+
+def _check_cap_net_admin() -> bool:
+    """Check CAP_NET_ADMIN in effective capabilities via /proc/self/status."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("CapEff:"):
+                    cap_hex = int(line.split()[1], 16)
+                    return bool(cap_hex & (1 << 12))  # CAP_NET_ADMIN = bit 12
+    except Exception:
+        pass
+    return False
+
+
+def _check_raw_socket() -> bool:
+    """Try opening a raw socket. Returns True if permitted."""
+    try:
+        s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, 0)
+        s.close()
+        return True
+    except PermissionError:
+        return False
+    except Exception:
+        return False
+
+
+def get_permissions_info() -> dict:
+    """Return a dict describing effective capture permissions."""
+    is_root = (os.geteuid() == 0)
+    cap_net_raw = _check_cap_net_raw()
+    cap_net_admin = _check_cap_net_admin()
+    raw_socket_ok = _check_raw_socket()
+    can_capture = is_root or cap_net_raw or raw_socket_ok
+    return {
+        "is_root": is_root,
+        "uid": os.geteuid(),
+        "user": os.environ.get("USER", "unknown"),
+        "cap_net_raw": cap_net_raw,
+        "cap_net_admin": cap_net_admin,
+        "raw_socket": raw_socket_ok,
+        "can_capture": can_capture,
+    }
+
+
+def get_available_interfaces() -> list:
+    if SCAPY_AVAILABLE:
+        try:
+            return scapy.get_if_list()
+        except Exception:
+            pass
+    try:
+        import subprocess
+        result = subprocess.run(["ip", "link", "show"], capture_output=True, text=True, timeout=3)
+        return [
+            line.split(": ")[1].split("@")[0].strip()
+            for line in result.stdout.splitlines()
+            if line and line[0].isdigit()
+        ]
+    except Exception:
+        return []
 
 
 class NetworkPacketAnalyzer:
@@ -38,103 +145,204 @@ class NetworkPacketAnalyzer:
 
         self.recent_alerts = deque(maxlen=100)
         self.alert_lock = threading.Lock()
-
         self.recent_packets = deque(maxlen=10000)
 
         self.running = False
         self.capture_thread = None
 
+        # Observable status state
+        self._status: str = CAPTURE_IDLE
+        self._status_lock = threading.Lock()
+        self._capture_error: Optional[str] = None
+        self._capture_fix: Optional[str] = None
+
         print(f"[Network Analyzer] Initialized on interface: {interface}")
+        print(f"[Network Analyzer] Scapy: {'available (' + _SCAPY_VERSION + ')' if SCAPY_AVAILABLE else 'unavailable'}")
         print(f"[Network Analyzer] ML Detector: {'Enabled' if ml_detector else 'Disabled'}")
+
+    # ── Status accessors ──────────────────────────────────────────────────────
+
+    @property
+    def capture_status(self) -> str:
+        with self._status_lock:
+            return self._status
+
+    def _set_status(self, status: str, error: str = None, fix: str = None):
+        with self._status_lock:
+            self._status = status
+            self._capture_error = error
+            self._capture_fix = fix
+
+    def get_capture_status(self) -> dict:
+        with self._status_lock:
+            return {
+                "status": self._status,
+                "mode": "simulation" if _SIMULATION_EXPLICITLY_ENABLED else "live",
+                "interface": self.interface,
+                "scapy_available": SCAPY_AVAILABLE,
+                "scapy_version": _SCAPY_VERSION,
+                "error": self._capture_error,
+                "fix": self._capture_fix,
+            }
+
+    # ── Preflight ─────────────────────────────────────────────────────────────
+
+    def _preflight(self) -> tuple:
+        """
+        Run all checks needed before starting live capture.
+        Returns (ok, error_message, fix_message).
+        """
+        if not SCAPY_AVAILABLE:
+            return False, "Scapy is not installed.", (
+                f"Install: {sys.executable} -m pip install scapy\n"
+                "Or enable simulation: ENABLE_SIMULATION_MODE=true"
+            )
+
+        available_ifaces = get_available_interfaces()
+        if self.interface not in available_ifaces:
+            return False, (
+                f"Interface '{self.interface}' not found. "
+                f"Available: {', '.join(available_ifaces) or 'none'}"
+            ), f"Set NETWORK_INTERFACE env var to one of: {', '.join(available_ifaces)}"
+
+        perms = get_permissions_info()
+        if not perms["can_capture"]:
+            python_real = os.path.realpath(sys.executable)
+            fix = (
+                f"Option 1 — grant capabilities once (no sudo per run after):\n"
+                f"  sudo /usr/sbin/setcap cap_net_raw,cap_net_admin=eip {python_real}\n"
+                f"  python enhanced_network_app.py\n\n"
+                f"Option 2 — sudo with the correct interpreter:\n"
+                f"  sudo {python_real} enhanced_network_app.py\n\n"
+                f"Option 3 — simulation mode (no real capture):\n"
+                f"  ENABLE_SIMULATION_MODE=true python enhanced_network_app.py"
+            )
+            return False, (
+                f"Insufficient permissions for raw packet capture "
+                f"(uid={perms['uid']}, is_root={perms['is_root']}, "
+                f"cap_net_raw={perms['cap_net_raw']})"
+            ), fix
+
+        return True, None, None
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def start_capture(self):
         if self.running:
-            print("[Warning] Capture already running")
+            print("[Network Analyzer] Capture already running")
+            return
+
+        if _SIMULATION_EXPLICITLY_ENABLED:
+            self._set_status(CAPTURE_SIMULATION)
+            self.running = True
+            self.capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
+            self.capture_thread.start()
+            print("[Network Analyzer] Started in SIMULATION mode (ENABLE_SIMULATION_MODE=true)")
+            return
+
+        self._set_status(CAPTURE_STARTING)
+        ok, err, fix = self._preflight()
+        if not ok:
+            if "Scapy" in err:
+                self._set_status(CAPTURE_SCAPY_MISSING, error=err, fix=fix)
+            elif "Interface" in err or "interface" in err:
+                self._set_status(CAPTURE_IFACE_MISSING, error=err, fix=fix)
+            else:
+                self._set_status(CAPTURE_PERM_DENIED, error=err, fix=fix)
+            print(f"\n[Network Analyzer] CAPTURE PREFLIGHT FAILED")
+            print(f"  Status : {self._status}")
+            print(f"  Error  : {err}")
+            if fix:
+                print(f"  Fix    :\n{fix}")
+            print()
             return
 
         self.running = True
         self.capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
         self.capture_thread.start()
-        print(f"[Network Analyzer] Started packet capture on {self.interface}")
+        print(f"[Network Analyzer] Started live capture on {self.interface}")
 
     def stop_capture(self):
         self.running = False
         if self.capture_thread:
             self.capture_thread.join(timeout=5)
+        self._set_status(CAPTURE_STOPPED)
         print("[Network Analyzer] Stopped packet capture")
 
+    # ── Capture loops ─────────────────────────────────────────────────────────
+
     def _capture_loop(self):
-        if SCAPY_AVAILABLE:
-            self._capture_with_scapy()
-        else:
+        if _SIMULATION_EXPLICITLY_ENABLED or not SCAPY_AVAILABLE:
             self._capture_simulated()
+        else:
+            self._capture_with_scapy()
 
     def _capture_simulated(self):
         import random
-
+        self._set_status(CAPTURE_SIMULATION)
         print("[Network Analyzer] Running in SIMULATION mode")
-        print("[Network Analyzer] Install scapy for real packet capture")
 
         protocols = ['TCP', 'UDP', 'ICMP', 'HTTP', 'HTTPS', 'DNS']
         attack_types = ['normal', 'port_scan', 'ddos', 'brute_force']
 
         while self.running:
-            attack_type = random.choices(
-                attack_types, 
-                weights=[85, 5, 5, 5]
-            )[0]
+            try:
+                attack_type = random.choices(attack_types, weights=[85, 5, 5, 5])[0]
 
-            if attack_type == 'port_scan':
-                src_ip = '203.45.67.89'
-                dst_ip = '192.168.1.100'
-                dst_port = random.randint(1, 65535)
-                src_port = random.randint(10000, 65000)
-                protocol = 'TCP'
+                if attack_type == 'port_scan':
+                    src_ip = '203.45.67.89'
+                    dst_ip = '192.168.1.100'
+                    dst_port = random.randint(1, 65535)
+                    src_port = random.randint(10000, 65000)
+                    protocol = 'TCP'
+                elif attack_type == 'ddos':
+                    src_ip = f'{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}'
+                    dst_ip = '192.168.1.50'
+                    dst_port = 80
+                    src_port = random.randint(10000, 65000)
+                    protocol = 'TCP'
+                elif attack_type == 'brute_force':
+                    src_ip = '10.0.0.25'
+                    dst_ip = '192.168.1.10'
+                    dst_port = 22
+                    src_port = random.randint(10000, 65000)
+                    protocol = 'TCP'
+                else:
+                    src_ip = f'192.168.1.{random.randint(10, 250)}'
+                    dst_ip = f'192.168.1.{random.randint(10, 250)}'
+                    dst_port = random.choice([80, 443, 22, 53, 25, 3306])
+                    src_port = random.randint(10000, 65000)
+                    protocol = random.choice(protocols)
 
-            elif attack_type == 'ddos':
-                src_ip = f'{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}'
-                dst_ip = '192.168.1.50'
-                dst_port = 80
-                src_port = random.randint(10000, 65000)
-                protocol = 'TCP'
+                packet_data = {
+                    'timestamp': datetime.now().isoformat(),
+                    'src_ip': src_ip,
+                    'dst_ip': dst_ip,
+                    'src_port': src_port,
+                    'dst_port': dst_port,
+                    'protocol': protocol,
+                    'size': random.randint(64, 1500),
+                    'flags': 'SYN' if protocol == 'TCP' else '',
+                    'payload_hash': hashlib.md5(f'{time.time()}'.encode()).hexdigest()[:16],
+                }
+                self.process_packet(packet_data)
 
-            elif attack_type == 'brute_force':
-                src_ip = '10.0.0.25'
-                dst_ip = '192.168.1.10'
-                dst_port = 22
-                src_port = random.randint(10000, 65000)
-                protocol = 'TCP'
+                if attack_type == 'ddos':
+                    time.sleep(0.001)
+                elif attack_type == 'port_scan':
+                    time.sleep(0.01)
+                else:
+                    time.sleep(random.uniform(0.05, 0.5))
 
-            else:
-                src_ip = f'192.168.1.{random.randint(10, 250)}'
-                dst_ip = f'192.168.1.{random.randint(10, 250)}'
-                dst_port = random.choice([80, 443, 22, 53, 25, 3306])
-                src_port = random.randint(10000, 65000)
-                protocol = random.choice(protocols)
+            except Exception as e:
+                print(f"[Network Analyzer] Simulation loop error: {e}")
+                time.sleep(1)
 
-            packet_data = {
-                'timestamp': datetime.now().isoformat(),
-                'src_ip': src_ip,
-                'dst_ip': dst_ip,
-                'src_port': src_port,
-                'dst_port': dst_port,
-                'protocol': protocol,
-                'size': random.randint(64, 1500),
-                'flags': 'SYN' if protocol == 'TCP' else '',
-                'payload_hash': hashlib.md5(f'{time.time()}'.encode()).hexdigest()[:16]
-            }
-
-            self.process_packet(packet_data)
-
-            if attack_type == 'ddos':
-                time.sleep(0.001)
-            elif attack_type == 'port_scan':
-                time.sleep(0.01)
-            else:
-                time.sleep(random.uniform(0.05, 0.5))
+        self._set_status(CAPTURE_STOPPED)
 
     def _capture_with_scapy(self):
-        print("[Network Analyzer] Running in LIVE capture mode (Scapy)")
+        print(f"[Network Analyzer] Starting live capture on {self.interface} (Scapy {_SCAPY_VERSION})")
+        self._set_status(CAPTURE_RUNNING)
 
         def pkt_callback(pkt):
             try:
@@ -142,18 +350,55 @@ class NetworkPacketAnalyzer:
                     "timestamp": datetime.now().isoformat(),
                     "src_ip": pkt[scapy.IP].src if pkt.haslayer(scapy.IP) else "",
                     "dst_ip": pkt[scapy.IP].dst if pkt.haslayer(scapy.IP) else "",
-                    "src_port": pkt[scapy.TCP].sport if pkt.haslayer(scapy.TCP) else (pkt[scapy.UDP].sport if pkt.haslayer(scapy.UDP) else 0),
-                    "dst_port": pkt[scapy.TCP].dport if pkt.haslayer(scapy.TCP) else (pkt[scapy.UDP].dport if pkt.haslayer(scapy.UDP) else 0),
-                    "protocol": "TCP" if pkt.haslayer(scapy.TCP) else ("UDP" if pkt.haslayer(scapy.UDP) else "OTHER"),
+                    "src_port": (pkt[scapy.TCP].sport if pkt.haslayer(scapy.TCP)
+                                 else (pkt[scapy.UDP].sport if pkt.haslayer(scapy.UDP) else 0)),
+                    "dst_port": (pkt[scapy.TCP].dport if pkt.haslayer(scapy.TCP)
+                                 else (pkt[scapy.UDP].dport if pkt.haslayer(scapy.UDP) else 0)),
+                    "protocol": ("TCP" if pkt.haslayer(scapy.TCP)
+                                 else ("UDP" if pkt.haslayer(scapy.UDP) else "OTHER")),
                     "size": len(pkt),
                     "flags": pkt.sprintf('%TCP.flags%') if pkt.haslayer(scapy.TCP) else "",
-                    "payload_hash": hashlib.md5(bytes(pkt)).hexdigest()[:16]
+                    "payload_hash": hashlib.md5(bytes(pkt)).hexdigest()[:16],
                 }
                 self.process_packet(packet_data)
-            except Exception as e:
-                pass
+            except Exception:
+                pass  # per-packet errors must not kill the capture thread
 
-        scapy.sniff(iface=self.interface, prn=pkt_callback, store=0)
+        try:
+            # stop_filter lets us exit cleanly when self.running goes False
+            scapy.sniff(
+                iface=self.interface,
+                prn=pkt_callback,
+                store=0,
+                stop_filter=lambda _: not self.running,
+            )
+        except PermissionError as e:
+            err = f"Permission denied on {self.interface}: {e}"
+            fix = (
+                f"  1. sudo python enhanced_network_app.py\n"
+                f"  2. sudo setcap cap_net_raw+eip {sys.executable}"
+            )
+            self._set_status(CAPTURE_PERM_DENIED, error=err, fix=fix)
+            self.running = False
+            print(f"\n[Network Analyzer] PERMISSION ERROR: {err}")
+            print(f"[Network Analyzer] Fix:\n{fix}\n")
+        except OSError as e:
+            err = f"OSError on interface '{self.interface}': {e}"
+            self._set_status(CAPTURE_IFACE_MISSING, error=err,
+                             fix=f"Set NETWORK_INTERFACE to a valid interface. Available: {', '.join(get_available_interfaces())}")
+            self.running = False
+            print(f"[Network Analyzer] INTERFACE ERROR: {err}")
+        except Exception as e:
+            err = f"Capture failed: {e}"
+            self._set_status(CAPTURE_FAILED, error=err)
+            self.running = False
+            print(f"[Network Analyzer] CAPTURE FAILED: {err}")
+            import traceback
+            traceback.print_exc()
+
+        if self._status not in (CAPTURE_STOPPED, CAPTURE_PERM_DENIED,
+                                CAPTURE_IFACE_MISSING, CAPTURE_FAILED):
+            self._set_status(CAPTURE_STOPPED)
 
     def process_packet(self, packet_data: Dict[str, Any]) -> Dict[str, Any]:
         self.packet_count += 1
@@ -289,7 +534,7 @@ Overall Statistics:
 
 Protocol Distribution:
 """
-        for proto, count in sorted(stats['protocol_distribution'].items(), 
+        for proto, count in sorted(stats['protocol_distribution'].items(),
                                    key=lambda x: x[1], reverse=True):
             percentage = (count / stats['packet_count'] * 100) if stats['packet_count'] > 0 else 0
             summary += f"   • {proto:8s}: {count:6,} packets ({percentage:5.1f}%)\n"
@@ -389,7 +634,7 @@ class DDoSDetector:
         target = f"{dst_ip}:{dst_port}"
         self.traffic_buffer[target].append(current_time)
 
-        while (self.traffic_buffer[target] and 
+        while (self.traffic_buffer[target] and
                current_time - self.traffic_buffer[target][0] > self.time_window):
             self.traffic_buffer[target].popleft()
 
@@ -445,7 +690,7 @@ class BruteForceDetector:
 
         self.attempts[target].append(current_time)
 
-        while (self.attempts[target] and 
+        while (self.attempts[target] and
                current_time - self.attempts[target][0] > self.time_window):
             self.attempts[target].popleft()
 

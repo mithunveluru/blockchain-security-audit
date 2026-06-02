@@ -1,0 +1,21 @@
+name: blockchain_log_auditor
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.13
+  - pip
+  - pip:
+    - Flask==3.0.0
+    - flask-socketio==5.3.5
+    - python-socketio==5.10.0
+    - gunicorn==21.2.0
+    - eventlet==0.33.3
+    - pycryptodome==3.19.0
+    - numpy>=1.26.0
+    - scikit-learn>=1.3.0
+    - python-dateutil==2.8.2
+    - watchdog==3.0.0
+    - scapy>=2.5.0
+    - pytest==7.4.3
+    - pytest-cov==4.1.0

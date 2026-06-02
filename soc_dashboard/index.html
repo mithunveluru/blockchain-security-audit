@@ -1,261 +1,337 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SOC Dashboard | Network Blockchain Security</title>
-    
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.4.1/socket.io.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
-    <link rel="stylesheet" href="/soc/assets/css/styles.css">
-    <link rel="stylesheet" href="/soc/assets/css/animations.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sentinel SOC - Network Security</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.4.1/socket.io.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/soc/assets/css/styles.css">
 </head>
-
 <body>
-    <div id="loadingScreen" class="loading-screen">
-        <div class="loading-content">
-            <div class="loading-cube">
-                <div class="cube-face"></div>
-                <div class="cube-face"></div>
-                <div class="cube-face"></div>
-            </div>
-            <p>Initializing Security Operations Center...</p>
+
+  <!-- Topbar -->
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="brand-icon">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+            <path d="M12 2L3 7v4c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5z"
+              stroke="currentColor" stroke-width="2.2" fill="none" stroke-linejoin="round"/>
+            <path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
         </div>
+        <div>
+          <div class="brand-name">Sentinel</div>
+          <div class="brand-sub">Security Operations Center</div>
+        </div>
+      </div>
+
+      <nav class="topnav" aria-label="Section navigation">
+        <button class="tnav active" data-view="overview" onclick="switchView('overview',this)">Overview</button>
+        <button class="tnav" data-view="threats"  onclick="switchView('threats',this)">
+          Threats
+          <span class="tnav-badge" id="threatBadge" style="display:none">0</span>
+        </button>
+        <button class="tnav" data-view="network"    onclick="switchView('network',this)">Network</button>
+        <button class="tnav" data-view="blockchain" onclick="switchView('blockchain',this)">Blockchain</button>
+        <button class="tnav" data-view="whitelist"  onclick="switchView('whitelist',this)">Whitelist</button>
+        <button class="tnav" data-view="system"     onclick="switchView('system',this)">
+          System
+          <span class="tnav-badge" id="systemBadge" style="display:none">!</span>
+        </button>
+      </nav>
+
+      <div class="topbar-right">
+        <span class="status-pill ok" id="statusPill">
+          <span class="pill-dot"></span>
+          <span id="statusText">Connected</span>
+        </span>
+        <span class="tbar-clock" id="clock">--:--:--</span>
+        <a class="tbar-link" href="/" title="Light mode dashboard">Light</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main -->
+  <main class="main" id="main">
+
+    <!-- Capture banner -->
+    <div id="captureBanner" class="capture-banner" role="alert" aria-live="polite">
+      <div class="cb-body">
+        <div class="cb-title" id="captureBannerTitle"></div>
+        <div class="cb-desc"  id="captureBannerDesc"></div>
+        <code class="cb-fix"  id="captureBannerFix" style="display:none"></code>
+      </div>
     </div>
 
-    <header class="header">
-        <div class="header-container">
-            <div class="logo-section">
-                <div class="logo-icon">
-                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M12 2L3 7V11C3 16.55 6.84 21.74 12 23C17.16 21.74 21 16.55 21 11V7L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                        <path d="M9 12L11 14L15 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                </div>
-                <div class="logo-text">
-                    <h1>SOC Dashboard</h1>
-                    <p>Enterprise Blockchain Network Security</p>
-                </div>
-            </div>
-            
-            <div class="header-status">
-                <div class="status-badge">
-                    <span class="pulse-dot"></span>
-                    <span>LIVE MONITORING</span>
-                </div>
-                <div class="time-display">
-                    <span id="currentTime">00:00:00</span>
-                </div>
-            </div>
+    <!-- ═══ OVERVIEW ═══ -->
+    <div id="view-overview" class="view active">
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">Threats Detected</div>
+          <div class="kpi-value" id="kpi-threats">0</div>
+          <div class="kpi-sub"   id="kpi-threats-sub">No active threats</div>
         </div>
-    </header>
+        <div class="kpi-card">
+          <div class="kpi-label">Packets Analyzed</div>
+          <div class="kpi-value" id="kpi-packets">0</div>
+          <div class="kpi-sub">Total since start</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Network Flows</div>
+          <div class="kpi-value" id="kpi-flows">0</div>
+          <div class="kpi-sub">Tracked flows</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Blockchain Blocks</div>
+          <div class="kpi-value" id="kpi-blocks">1</div>
+          <div class="kpi-sub">Immutable entries</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">System Uptime</div>
+          <div class="kpi-value" id="kpi-uptime">0h</div>
+          <div class="kpi-sub">Since last start</div>
+        </div>
+      </div>
 
-    <main class="main-container">
-        <section class="threat-zone">
-            <div class="threat-indicator">
-                <div class="threat-gauge" id="threatGauge">
-                    <svg viewBox="0 0 100 100">
-                        <circle cx="50" cy="50" r="40" class="gauge-bg"></circle>
-                        <circle cx="50" cy="50" r="40" class="gauge-fill" id="gaugeFill" style="stroke-dasharray: 0, 251.2;"></circle>
-                        <text x="50" y="55" class="gauge-text" id="threatLevel">0</text>
-                    </svg>
-                </div>
-                <div class="threat-info">
-                    <h2 id="threatStatus">System Secure</h2>
-                    <p id="threatDescription">No active threats detected</p>
-                </div>
+      <div class="grid-2 mb">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Active Threats</span></div>
+          <div class="card-body" id="activeThreatsList">
+            <div class="empty-state">
+              <div class="empty-title">No active threats</div>
+              <div class="empty-desc">System is operating normally</div>
             </div>
-        </section>
-
-        <section class="kpi-section">
-            <h2 class="section-title">Security Metrics</h2>
-            <div class="kpi-grid">
-                <div class="kpi-card" data-kpi="threats">
-                    <div class="kpi-header">
-                        <div class="kpi-icon">
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                <line x1="12" y1="9" x2="12" y2="13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                                <line x1="12" y1="17" x2="12.01" y2="17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                            </svg>
-                        </div>
-                        <span class="kpi-label">Threats Detected</span>
-                    </div>
-                    <div class="kpi-value" id="kpi-threats">0</div>
-                    <div class="kpi-spark">
-                        <canvas id="spark-threats"></canvas>
-                    </div>
-                </div>
-
-                <div class="kpi-card" data-kpi="packets">
-                    <div class="kpi-header">
-                        <div class="kpi-icon">
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                <polyline points="3.27 6.96 12 12.01 20.73 6.96" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                <line x1="12" y1="22.08" x2="12" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                            </svg>
-                        </div>
-                        <span class="kpi-label">Packets Analyzed</span>
-                    </div>
-                    <div class="kpi-value" id="kpi-packets">0</div>
-                    <div class="kpi-spark">
-                        <canvas id="spark-packets"></canvas>
-                    </div>
-                </div>
-
-                <div class="kpi-card" data-kpi="flows">
-                    <div class="kpi-header">
-                        <div class="kpi-icon">
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                <path d="M21.21 15.89A10 10 0 118 2.83" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                <path d="M22 12A10 10 0 0012 2v10z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                            </svg>
-                        </div>
-                        <span class="kpi-label">Network Flows</span>
-                    </div>
-                    <div class="kpi-value" id="kpi-flows">0</div>
-                    <div class="kpi-spark">
-                        <canvas id="spark-flows"></canvas>
-                    </div>
-                </div>
-
-                <div class="kpi-card" data-kpi="blocks">
-                    <div class="kpi-header">
-                        <div class="kpi-icon">
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                <rect x="3" y="3" width="7" height="7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                <rect x="14" y="3" width="7" height="7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                <rect x="14" y="14" width="7" height="7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                <rect x="3" y="14" width="7" height="7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                            </svg>
-                        </div>
-                        <span class="kpi-label">Blockchain Blocks</span>
-                    </div>
-                    <div class="kpi-value" id="kpi-blocks">1</div>
-                    <div class="kpi-spark">
-                        <canvas id="spark-blocks"></canvas>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <section class="integrity-section">
-            <h2 class="section-title">Blockchain Integrity</h2>
-            <div class="integrity-panel">
-                <div class="integrity-status">
-                    <div class="status-circle" id="integrityStatus">
-                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <polyline points="20 6 9 17 4 12" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-                        </svg>
-                    </div>
-                    <div class="status-info">
-                        <h3 id="integrityTitle">Blockchain Valid</h3>
-                        <p id="integrityDesc">All blocks verified and immutable</p>
-                    </div>
-                </div>
-                <div class="integrity-stats">
-                    <div class="integrity-stat">
-                        <span class="stat-label">Total Blocks</span>
-                        <span class="stat-value" id="stat-blocks">1</span>
-                    </div>
-                    <div class="integrity-stat">
-                        <span class="stat-label">Integrity Checks</span>
-                        <span class="stat-value" id="stat-checks">0</span>
-                    </div>
-                    <div class="integrity-stat">
-                        <span class="stat-label">Chain Status</span>
-                        <span class="stat-value" id="stat-chain">Valid</span>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <section class="incidents-section">
-            <h2 class="section-title">Active Incidents</h2>
-            <div class="incidents-container">
-                <table class="incidents-table">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>Threat Type</th>
-                            <th>Severity</th>
-                            <th>Source/Target</th>
-                            <th>Details</th>
-                            <th>Status</th>
-                        </tr>
-                    </thead>
-                    <tbody id="incidentsBody">
-                        <tr class="no-data">
-                            <td colspan="6">Waiting for incidents...</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </section>
-
-        <section class="charts-section">
-            <h2 class="section-title">Real-Time Analytics</h2>
-            <div class="charts-grid">
-                <div class="chart-card full-width">
-                    <div class="chart-header">
-                        <h3>Threat Timeline (Last 24 Hours)</h3>
-                        <div class="chart-controls">
-                            <button class="chart-control-btn" data-range="1h">1H</button>
-                            <button class="chart-control-btn" data-range="24h">24H</button>
-                        </div>
-                    </div>
-                    <canvas id="threatTimeline"></canvas>
-                </div>
-
-                <div class="chart-card">
-                    <div class="chart-header">
-                        <h3>Threat Types</h3>
-                    </div>
-                    <canvas id="threatDistribution"></canvas>
-                </div>
-
-                <div class="chart-card">
-                    <div class="chart-header">
-                        <h3>Network Health</h3>
-                    </div>
-                    <canvas id="networkHealth"></canvas>
-                </div>
-
-                <div class="chart-card">
-                    <div class="chart-header">
-                        <h3>Protocol Distribution</h3>
-                    </div>
-                    <canvas id="protocolDist"></canvas>
-                </div>
-
-                <div class="chart-card">
-                    <div class="chart-header">
-                        <h3>Top Attacked Ports</h3>
-                    </div>
-                    <div id="portHeatmap" class="port-heatmap"></div>
-                </div>
-            </div>
-        </section>
-
-        <footer class="footer">
-            <p>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="display: inline-block; vertical-align: middle; margin-right: 8px;">
-                    <path d="M12 2L3 7V11C3 16.55 6.84 21.74 12 23C17.16 21.74 21 16.55 21 11V7L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">Blockchain Integrity</span></div>
+          <div class="card-body">
+            <div class="int-panel ok" id="intPanel">
+              <div class="int-icon ok" id="intIcon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                  <path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
-                Enterprise Network Security Blockchain Audit System
-            </p>
-            <p>Real-time Threat Detection • Immutable Logging • Zero Trust Architecture</p>
-        </footer>
-    </main>
+              </div>
+              <div>
+                <div class="int-title" id="intTitle">Chain Valid</div>
+                <div class="int-desc"  id="intDesc">All blocks verified</div>
+              </div>
+              <div class="int-stats">
+                <div class="i-s">
+                  <div class="i-s-val" id="intBlocks">1</div>
+                  <div class="i-s-label">Blocks</div>
+                </div>
+                <div class="i-s">
+                  <div class="i-s-val" id="intChecks">0</div>
+                  <div class="i-s-label">Checks</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
-    <script src="/assets/js/websocket.js"></script>
-    <script src="/assets/js/charts.js"></script>
-    <script src="/assets/js/main.js"></script>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Recent Security Events</span></div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>Block</th><th>Time</th><th>Severity</th><th>Summary</th></tr></thead>
+            <tbody id="eventsBody">
+              <tr><td colspan="4"><div class="empty-state"><div class="empty-title">Waiting for events</div></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ THREATS ═══ -->
+    <div id="view-threats" class="view">
+      <div class="card mb">
+        <div class="card-header">
+          <span class="card-title">Threat Timeline</span>
+          <div class="filter-bar">
+            <button class="filter-btn active" onclick="setRange('1h',this)">1H</button>
+            <button class="filter-btn" onclick="setRange('24h',this)">24H</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="chart-lg"><canvas id="timelineCanvas"></canvas></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Incidents</span>
+          <div class="filter-bar" id="sevFilter">
+            <button class="filter-btn active" data-sev="all"      onclick="filterSev('all',this)">All</button>
+            <button class="filter-btn" data-sev="critical" onclick="filterSev('critical',this)">Critical</button>
+            <button class="filter-btn" data-sev="high"    onclick="filterSev('high',this)">High</button>
+            <button class="filter-btn" data-sev="medium"  onclick="filterSev('medium',this)">Medium</button>
+            <button class="filter-btn" data-sev="low"     onclick="filterSev('low',this)">Low</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>Time</th><th>Type</th><th>Severity</th><th>Source</th><th>Description</th></tr></thead>
+            <tbody id="threatsBody">
+              <tr><td colspan="5"><div class="empty-state"><div class="empty-title">No incidents</div></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ NETWORK ═══ -->
+    <div id="view-network" class="view">
+      <div class="grid-3 mb">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Protocol Distribution</span></div>
+          <div class="card-body"><div class="chart-sm"><canvas id="protocolCanvas"></canvas></div></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">Threat Types</span></div>
+          <div class="card-body"><div class="chart-sm"><canvas id="distCanvas"></canvas></div></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">Network Health</span></div>
+          <div class="card-body"><div class="chart-sm"><canvas id="healthCanvas"></canvas></div></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Top Targeted Ports</span></div>
+        <div class="card-body">
+          <div id="portBars" style="display:flex;gap:8px;align-items:flex-end;height:110px;padding-top:4px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ BLOCKCHAIN ═══ -->
+    <div id="view-blockchain" class="view">
+      <div class="card mb">
+        <div class="card-body">
+          <div class="int-panel ok" id="bcPanel">
+            <div class="int-icon ok" id="bcIcon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                <path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <div>
+              <div class="int-title" id="bcTitle">Chain Valid</div>
+              <div class="int-desc"  id="bcDesc">All blocks verified and immutable</div>
+            </div>
+            <div class="int-stats">
+              <div class="i-s"><div class="i-s-val" id="bcBlocks">1</div><div class="i-s-label">Blocks</div></div>
+              <div class="i-s"><div class="i-s-val" id="bcChecks">0</div><div class="i-s-label">Checks</div></div>
+              <div class="i-s"><div class="i-s-val" id="bcStatus">Valid</div><div class="i-s-label">Status</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Block Log</span></div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>#</th><th>Timestamp</th><th>Severity</th><th>Summary</th></tr></thead>
+            <tbody id="blockchainBody">
+              <tr><td colspan="4"><div class="empty-state"><div class="empty-title">Waiting for blocks</div></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ WHITELIST ═══ -->
+    <div id="view-whitelist" class="view">
+      <div class="grid-2 mb">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Add Entry</span></div>
+          <div class="card-body">
+            <div class="form-group">
+              <label class="form-label" for="wlInput">IP Address or CIDR Range</label>
+              <input class="form-input" id="wlInput" type="text"
+                placeholder="192.168.1.1 or 10.0.0.0/8" autocomplete="off"
+                onkeydown="if(event.key==='Enter')addToWhitelist()">
+              <div class="form-hint">Supports single IPs and CIDR notation</div>
+            </div>
+            <div id="wlError"   class="form-error"></div>
+            <div id="wlSuccess" class="form-success"></div>
+            <button class="btn btn-primary" onclick="addToWhitelist()">Add to Whitelist</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">Status</span></div>
+          <div class="card-body">
+            <div class="status-row"><span class="status-label">Whitelist enabled</span><span class="status-value" id="wlEnabled">-</span></div>
+            <div class="status-row"><span class="status-label">Total entries</span><span class="status-value" id="wlCount">-</span></div>
+            <div class="status-row"><span class="status-label">Persistence</span><span class="status-value">In-memory, resets on restart</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Trusted Entries</span></div>
+        <div id="wlList">
+          <div class="empty-state">
+            <div class="empty-title">No entries</div>
+            <div class="empty-desc">All traffic is subject to threat detection</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ SYSTEM ═══ -->
+    <div id="view-system" class="view">
+      <div class="grid-2 mb">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Dependencies</span></div>
+          <div class="card-body"><div class="health-grid" id="depGrid">
+            <div class="health-item"><div class="h-dot unk"></div><div class="h-body"><div class="h-label">Loading</div><div class="h-val">-</div></div></div>
+          </div></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">Environment</span></div>
+          <div class="card-body" id="envGrid">
+            <div class="status-row"><span class="status-label">Loading...</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Packet Capture</span></div>
+        <div class="card-body" id="captureHealthBody">
+          <div class="status-row"><span class="status-label">Loading...</span></div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Integrity toast -->
+  <div id="integrityToast" class="toast" style="display:none" role="alertdialog" aria-labelledby="toastTitle">
+    <div class="toast-header">
+      <div class="toast-icon err" id="toastIcon">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+          <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="currentColor" stroke-width="2"/>
+          <line x1="12" y1="9" x2="12" y2="13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <line x1="12" y1="17" x2="12.01" y2="17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div class="toast-title" id="toastTitle">Integrity Alert</div>
+      <button class="toast-close" onclick="dismissToast()" aria-label="Dismiss">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+          <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
+    <div class="toast-body" id="toastBody"></div>
+    <div class="toast-time" id="toastTime"></div>
+    <div class="toast-actions">
+      <button class="btn btn-sm btn-secondary" onclick="dismissToast()">Dismiss</button>
+    </div>
+  </div>
+
+  <script src="/soc/assets/js/websocket.js"></script>
+  <script src="/soc/assets/js/charts.js"></script>
 </body>
 </html>
-
