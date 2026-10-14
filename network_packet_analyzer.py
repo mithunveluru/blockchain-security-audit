@@ -1,659 +1,307 @@
 #!/usr/bin/env python3
-
+"""packet intake: live capture through scapy or simulation, then validation and detection"""
 import os
-import sys
+import queue
 import socket
-import time
-from datetime import datetime
-from collections import defaultdict, deque
+import sys
 import threading
-import hashlib
-CAPTURE_IDLE       = "idle"
-CAPTURE_STARTING   = "starting"
-CAPTURE_RUNNING    = "capture_running"
+import time
+from collections import deque
+
+from blockaudit.detectors import BruteForceDetector, DoSDetector, PortScanDetector, sample_packets
+from blockaudit.events import normalize_packet
+from blockaudit.telemetry import Telemetry
+
+CAPTURE_IDLE = "idle"
+CAPTURE_STARTING = "starting"
+CAPTURE_RUNNING = "capture_running"
 CAPTURE_SIMULATION = "simulation"
-CAPTURE_STOPPED    = "capture_stopped"
-CAPTURE_PERM_DENIED  = "permission_denied"
+CAPTURE_STOPPED = "capture_stopped"
+CAPTURE_PERM_DENIED = "permission_denied"
 CAPTURE_IFACE_MISSING = "interface_missing"
 CAPTURE_SCAPY_MISSING = "scapy_missing"
-CAPTURE_FAILED     = "capture_failed"
-
-_SIMULATION_EXPLICITLY_ENABLED = os.environ.get("ENABLE_SIMULATION_MODE", "").lower() in ("1", "true")
+CAPTURE_FAILED = "capture_failed"
 
 try:
     import scapy.all as scapy
     SCAPY_AVAILABLE = True
-    _SCAPY_VERSION = scapy.VERSION if hasattr(scapy, "VERSION") else "unknown"
-except ImportError as _scapy_import_error:
+    _SCAPY_VERSION = getattr(scapy, "VERSION", "unknown")
+except ImportError:
+    scapy = None
     SCAPY_AVAILABLE = False
     _SCAPY_VERSION = None
-    _scapy_error_detail = (
-        f"\n  [SCAPY IMPORT FAILED]\n"
-        f"  Reason   : {_scapy_import_error}\n"
-        f"  Python   : {sys.executable}\n"
-        f"  Version  : {sys.version.split()[0]}\n"
-        f"  sys.path : {[p for p in sys.path if 'site-packages' in p]}\n\n"
-        f"  Fix: {sys.executable} -m pip install scapy\n"
-        f"  Or:  ENABLE_SIMULATION_MODE=true python enhanced_network_app.py\n"
-    )
-    if not _SIMULATION_EXPLICITLY_ENABLED:
-        print(_scapy_error_detail, file=sys.stderr)
-        raise ImportError(
-            "Scapy is required for live packet capture. "
-            "Set ENABLE_SIMULATION_MODE=true to use simulation mode.\n"
-            + _scapy_error_detail
-        ) from _scapy_import_error
-    print(f"[Network Analyzer] WARNING: Scapy unavailable — simulation mode active.")
-    print(f"  Reason: {_scapy_import_error}")
 
 
-def _check_cap_net_raw() -> bool:
+def _cap_bit(bit):
     try:
         with open("/proc/self/status") as f:
             for line in f:
                 if line.startswith("CapEff:"):
-                    return bool(int(line.split()[1], 16) & (1 << 13))  # CAP_NET_RAW
-    except Exception:
+                    return bool(int(line.split()[1], 16) & (1 << bit))
+    except (OSError, ValueError):
         pass
     return False
 
 
-def _check_cap_net_admin() -> bool:
+def _check_raw_socket():
     try:
-        with open("/proc/self/status") as f:
-            for line in f:
-                if line.startswith("CapEff:"):
-                    return bool(int(line.split()[1], 16) & (1 << 12))  # CAP_NET_ADMIN
-    except Exception:
-        pass
-    return False
-
-
-def _check_raw_socket() -> bool:
-    try:
-        s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, 0)
-        s.close()
+        socket.socket(socket.AF_PACKET, socket.SOCK_RAW, 0).close()
         return True
-    except Exception:
+    except (OSError, AttributeError):
         return False
 
 
-def get_permissions_info() -> dict:
-    is_root = (os.geteuid() == 0)
-    cap_net_raw = _check_cap_net_raw()
-    cap_net_admin = _check_cap_net_admin()
-    raw_socket_ok = _check_raw_socket()
-    can_capture = is_root or cap_net_raw or raw_socket_ok
-    return {
-        "is_root": is_root,
-        "uid": os.geteuid(),
-        "user": os.environ.get("USER", "unknown"),
-        "cap_net_raw": cap_net_raw,
-        "cap_net_admin": cap_net_admin,
-        "raw_socket": raw_socket_ok,
-        "can_capture": can_capture,
-    }
+def get_permissions_info():
+    is_root = os.geteuid() == 0
+    raw = _check_raw_socket()
+    cap_raw = _cap_bit(13)
+    return {"is_root": is_root, "cap_net_raw": cap_raw, "cap_net_admin": _cap_bit(12), "raw_socket": raw,
+            "can_capture": is_root or cap_raw or raw}
 
 
-def get_available_interfaces() -> list:
+def get_available_interfaces():
     if SCAPY_AVAILABLE:
         try:
-            return scapy.get_if_list()
+            return list(scapy.get_if_list())
         except Exception:
             pass
     try:
-        import subprocess
-        result = subprocess.run(["ip", "link", "show"], capture_output=True, text=True, timeout=3)
-        return [
-            line.split(": ")[1].split("@")[0].strip()
-            for line in result.stdout.splitlines()
-            if line and line[0].isdigit()
-        ]
-    except Exception:
+        return [n for _, n in socket.if_nameindex()]
+    except OSError:
         return []
 
 
+def default_interface():
+    if SCAPY_AVAILABLE:
+        try:
+            return str(scapy.conf.iface)
+        except Exception:
+            pass
+    names = [n for n in get_available_interfaces() if n != "lo"]
+    return names[0] if names else ""
+
+
 class NetworkPacketAnalyzer:
-    def __init__(self, interface='wlp0s20f3', ml_detector=None):
-        self.interface = interface
+    def __init__(self, interface="", ml_detector=None, flow_analyzer=None, telemetry=None, simulator_factory=None,
+                 provenance="live_capture", on_alert=None, queue_size=10000, ring=5000, thresholds=None):
+        t = thresholds or {}
+        self.interface = interface or default_interface()
         self.ml_detector = ml_detector
+        self.flow_analyzer = flow_analyzer
+        self.telemetry = telemetry or Telemetry()
+        self.simulator_factory = simulator_factory
+        self.provenance = provenance
+        self.on_alert = on_alert
+        self.simulator = None
 
-        self.packet_count = 0
-        self.byte_count = 0
-        self.protocol_stats = defaultdict(int)
-        self.ip_stats = defaultdict(lambda: {'packets': 0, 'bytes': 0})
-        self.port_stats = defaultdict(int)
+        self.detectors = [
+            PortScanDetector(t.get("portscan_ports", 20), t.get("portscan_window", 10)),
+            DoSDetector(t.get("dos_pps", 200), t.get("dos_window", 5), t.get("dos_min_sources", 20)),
+            BruteForceDetector(t.get("brute_attempts", 10), t.get("brute_window", 60)),
+        ]
+        self.ring = deque(maxlen=ring)
+        self._lock = threading.RLock()
+        self._q = queue.Queue(maxsize=queue_size)
+        self._stop = threading.Event()
+        self._worker = None
+        self._sniffer = None
 
-        self.active_flows = {}
-        self.flow_timeout = 300
-
-        self.port_scan_detector = PortScanDetector(threshold=3, time_window=10)
-        self.ddos_detector = DDoSDetector(threshold=100, time_window=5)
-        self.brute_force_detector = BruteForceDetector(threshold=5, time_window=60)
-
-        self.recent_alerts = deque(maxlen=100)
-        self.alert_lock = threading.Lock()
-        self.recent_packets = deque(maxlen=10000)
-
-        self.running = False
-        self.capture_thread = None
-
-        self._status: str = CAPTURE_IDLE
-        self._status_lock = threading.Lock()
-        self._capture_error: Optional[str] = None
-        self._capture_fix: Optional[str] = None
-
-        print(f"[Network Analyzer] Initialized on interface: {interface}")
-        print(f"[Network Analyzer] Scapy: {'available (' + _SCAPY_VERSION + ')' if SCAPY_AVAILABLE else 'unavailable'}")
-        print(f"[Network Analyzer] ML Detector: {'Enabled' if ml_detector else 'Disabled'}")
+        self.counters = {"packets": 0, "bytes": 0, "invalid": 0, "dropped": 0, "alerts": 0}
+        self.last_packet_at = None
+        self.last_error = None
+        self._status = CAPTURE_IDLE
+        self._error = None
+        self._fix = None
 
     @property
-    def capture_status(self) -> str:
-        with self._status_lock:
-            return self._status
+    def running(self):
+        return self._worker is not None and self._worker.is_alive() and not self._stop.is_set()
 
-    def _set_status(self, status: str, error: str = None, fix: str = None):
-        with self._status_lock:
-            self._status = status
-            self._capture_error = error
-            self._capture_fix = fix
+    def _set_status(self, status, error=None, fix=None):
+        self._status, self._error, self._fix = status, error, fix
 
-    def get_capture_status(self) -> dict:
-        with self._status_lock:
-            return {
-                "status": self._status,
-                "mode": "simulation" if _SIMULATION_EXPLICITLY_ENABLED else "live",
-                "interface": self.interface,
-                "scapy_available": SCAPY_AVAILABLE,
-                "scapy_version": _SCAPY_VERSION,
-                "error": self._capture_error,
-                "fix": self._capture_fix,
-            }
+    def get_capture_status(self):
+        if self._status in (CAPTURE_RUNNING, CAPTURE_SIMULATION) and not self.running:
+            self._set_status(CAPTURE_FAILED, "worker thread is not running")
+        elif self._status == CAPTURE_RUNNING and self._sniffer is not None:
+            exc = getattr(self._sniffer, "exception", None)
+            if exc is not None or not getattr(self._sniffer, "running", True):
+                self._set_status(CAPTURE_FAILED, f"capture thread stopped: {exc}" if exc else "capture thread stopped")
+        return {"status": self._status, "mode": "simulation" if self.provenance == "simulation" else "live",
+                "interface": self.interface, "scapy_available": SCAPY_AVAILABLE, "scapy_version": _SCAPY_VERSION,
+                "error": self._error, "fix": self._fix, "queue_depth": self._q.qsize(),
+                "queue_capacity": self._q.maxsize, "dropped_packets": self.counters["dropped"],
+                "last_packet_at": self.last_packet_at}
 
-    def _preflight(self) -> tuple:
+    def _preflight(self):
         if not SCAPY_AVAILABLE:
-            return False, "Scapy is not installed.", (
-                f"Install: {sys.executable} -m pip install scapy\n"
-                "Or enable simulation: ENABLE_SIMULATION_MODE=true"
-            )
-
-        available_ifaces = get_available_interfaces()
-        if self.interface not in available_ifaces:
-            return False, (
-                f"Interface '{self.interface}' not found. "
-                f"Available: {', '.join(available_ifaces) or 'none'}"
-            ), f"Set NETWORK_INTERFACE env var to one of: {', '.join(available_ifaces)}"
-
-        perms = get_permissions_info()
-        if not perms["can_capture"]:
-            python_real = os.path.realpath(sys.executable)
-            fix = (
-                f"Option 1 — grant capabilities once (no sudo per run after):\n"
-                f"  sudo /usr/sbin/setcap cap_net_raw,cap_net_admin=eip {python_real}\n"
-                f"  python enhanced_network_app.py\n\n"
-                f"Option 2 — sudo with the correct interpreter:\n"
-                f"  sudo {python_real} enhanced_network_app.py\n\n"
-                f"Option 3 — simulation mode (no real capture):\n"
-                f"  ENABLE_SIMULATION_MODE=true python enhanced_network_app.py"
-            )
-            return False, (
-                f"Insufficient permissions for raw packet capture "
-                f"(uid={perms['uid']}, is_root={perms['is_root']}, "
-                f"cap_net_raw={perms['cap_net_raw']})"
-            ), fix
-
-        return True, None, None
+            return CAPTURE_SCAPY_MISSING, "scapy is not installed", "pip install scapy, or set ENABLE_SIMULATION_MODE=1"
+        ifaces = get_available_interfaces()
+        if self.interface not in ifaces:
+            return (CAPTURE_IFACE_MISSING, f"interface {self.interface!r} not found; available: {', '.join(ifaces) or 'none'}",
+                    "set NETWORK_INTERFACE to one of the available interfaces")
+        if not get_permissions_info()["can_capture"]:
+            return (CAPTURE_PERM_DENIED, "no permission for raw packet capture",
+                    f"sudo setcap cap_net_raw,cap_net_admin=eip {os.path.realpath(sys.executable)}, or use simulation mode")
+        return None
 
     def start_capture(self):
         if self.running:
-            print("[Network Analyzer] Capture already running")
             return
-
-        if _SIMULATION_EXPLICITLY_ENABLED:
+        self._stop.clear()
+        if self.provenance != "simulation" and self.simulator_factory is None:
+            self._set_status(CAPTURE_STARTING)
+            failure = self._preflight()
+            if failure:
+                self._set_status(*failure)
+                return
+        self._worker = threading.Thread(target=self._work, name="packet-worker", daemon=True)
+        self._worker.start()
+        if self.simulator_factory is not None:
+            self.simulator = self.simulator_factory(self.enqueue)
+            self.simulator.start()
             self._set_status(CAPTURE_SIMULATION)
-            self.running = True
-            self.capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
-            self.capture_thread.start()
-            print("[Network Analyzer] Started in SIMULATION mode (ENABLE_SIMULATION_MODE=true)")
-            return
-
-        self._set_status(CAPTURE_STARTING)
-        ok, err, fix = self._preflight()
-        if not ok:
-            if "Scapy" in err:
-                self._set_status(CAPTURE_SCAPY_MISSING, error=err, fix=fix)
-            elif "Interface" in err or "interface" in err:
-                self._set_status(CAPTURE_IFACE_MISSING, error=err, fix=fix)
-            else:
-                self._set_status(CAPTURE_PERM_DENIED, error=err, fix=fix)
-            print(f"\n[Network Analyzer] CAPTURE PREFLIGHT FAILED")
-            print(f"  Status : {self._status}")
-            print(f"  Error  : {err}")
-            if fix:
-                print(f"  Fix    :\n{fix}")
-            print()
-            return
-
-        self.running = True
-        self.capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
-        self.capture_thread.start()
-        print(f"[Network Analyzer] Started live capture on {self.interface}")
+        else:
+            try:
+                self._sniffer = scapy.AsyncSniffer(iface=self.interface, prn=self._on_scapy_packet, store=False)
+                self._sniffer.start()
+                self._set_status(CAPTURE_RUNNING)
+            except PermissionError as e:
+                self._set_status(CAPTURE_PERM_DENIED, str(e))
+            except Exception as e:
+                self._set_status(CAPTURE_FAILED, f"{type(e).__name__}: {e}")
 
     def stop_capture(self):
-        self.running = False
-        if self.capture_thread:
-            self.capture_thread.join(timeout=5)
-        self._set_status(CAPTURE_STOPPED)
-        print("[Network Analyzer] Stopped packet capture")
-
-    def _capture_loop(self):
-        if _SIMULATION_EXPLICITLY_ENABLED or not SCAPY_AVAILABLE:
-            self._capture_simulated()
-        else:
-            self._capture_with_scapy()
-
-    def _capture_simulated(self):
-        import random
-        self._set_status(CAPTURE_SIMULATION)
-        print("[Network Analyzer] Running in SIMULATION mode")
-
-        protocols = ['TCP', 'UDP', 'ICMP', 'HTTP', 'HTTPS', 'DNS']
-        attack_types = ['normal', 'port_scan', 'ddos', 'brute_force']
-
-        while self.running:
+        self._stop.set()
+        if self._sniffer is not None:
             try:
-                attack_type = random.choices(attack_types, weights=[85, 5, 5, 5])[0]
-
-                if attack_type == 'port_scan':
-                    src_ip = '203.45.67.89'
-                    dst_ip = '192.168.1.100'
-                    dst_port = random.randint(1, 65535)
-                    src_port = random.randint(10000, 65000)
-                    protocol = 'TCP'
-                elif attack_type == 'ddos':
-                    src_ip = f'{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}'
-                    dst_ip = '192.168.1.50'
-                    dst_port = 80
-                    src_port = random.randint(10000, 65000)
-                    protocol = 'TCP'
-                elif attack_type == 'brute_force':
-                    src_ip = '10.0.0.25'
-                    dst_ip = '192.168.1.10'
-                    dst_port = 22
-                    src_port = random.randint(10000, 65000)
-                    protocol = 'TCP'
-                else:
-                    src_ip = f'192.168.1.{random.randint(10, 250)}'
-                    dst_ip = f'192.168.1.{random.randint(10, 250)}'
-                    dst_port = random.choice([80, 443, 22, 53, 25, 3306])
-                    src_port = random.randint(10000, 65000)
-                    protocol = random.choice(protocols)
-
-                packet_data = {
-                    'timestamp': datetime.now().isoformat(),
-                    'src_ip': src_ip,
-                    'dst_ip': dst_ip,
-                    'src_port': src_port,
-                    'dst_port': dst_port,
-                    'protocol': protocol,
-                    'size': random.randint(64, 1500),
-                    'flags': 'SYN' if protocol == 'TCP' else '',
-                    'payload_hash': hashlib.md5(f'{time.time()}'.encode()).hexdigest()[:16],
-                }
-                self.process_packet(packet_data)
-
-                if attack_type == 'ddos':
-                    time.sleep(0.001)
-                elif attack_type == 'port_scan':
-                    time.sleep(0.01)
-                else:
-                    time.sleep(random.uniform(0.05, 0.5))
-
-            except Exception as e:
-                print(f"[Network Analyzer] Simulation loop error: {e}")
-                time.sleep(1)
-
-        self._set_status(CAPTURE_STOPPED)
-
-    def _capture_with_scapy(self):
-        print(f"[Network Analyzer] Starting live capture on {self.interface} (Scapy {_SCAPY_VERSION})")
-        self._set_status(CAPTURE_RUNNING)
-
-        def pkt_callback(pkt):
-            try:
-                packet_data = {
-                    "timestamp": datetime.now().isoformat(),
-                    "src_ip": pkt[scapy.IP].src if pkt.haslayer(scapy.IP) else "",
-                    "dst_ip": pkt[scapy.IP].dst if pkt.haslayer(scapy.IP) else "",
-                    "src_port": (pkt[scapy.TCP].sport if pkt.haslayer(scapy.TCP)
-                                 else (pkt[scapy.UDP].sport if pkt.haslayer(scapy.UDP) else 0)),
-                    "dst_port": (pkt[scapy.TCP].dport if pkt.haslayer(scapy.TCP)
-                                 else (pkt[scapy.UDP].dport if pkt.haslayer(scapy.UDP) else 0)),
-                    "protocol": ("TCP" if pkt.haslayer(scapy.TCP)
-                                 else ("UDP" if pkt.haslayer(scapy.UDP) else "OTHER")),
-                    "size": len(pkt),
-                    "flags": pkt.sprintf('%TCP.flags%') if pkt.haslayer(scapy.TCP) else "",
-                    "payload_hash": hashlib.md5(bytes(pkt)).hexdigest()[:16],
-                }
-                self.process_packet(packet_data)
+                self._sniffer.stop()
             except Exception:
-                pass  # per-packet errors must not kill the capture thread
+                pass
+            self._sniffer = None
+        if self.simulator is not None:
+            self.simulator.stop()
+            self.simulator = None
+        if self._worker is not None:
+            self._worker.join(timeout=5)
+        self._set_status(CAPTURE_STOPPED)
 
+    def _on_scapy_packet(self, pkt):
         try:
-            # stop_filter lets us exit cleanly when self.running goes False
-            scapy.sniff(
-                iface=self.interface,
-                prn=pkt_callback,
-                store=0,
-                stop_filter=lambda _: not self.running,
-            )
-        except PermissionError as e:
-            err = f"Permission denied on {self.interface}: {e}"
-            fix = (
-                f"  1. sudo python enhanced_network_app.py\n"
-                f"  2. sudo setcap cap_net_raw+eip {sys.executable}"
-            )
-            self._set_status(CAPTURE_PERM_DENIED, error=err, fix=fix)
-            self.running = False
-            print(f"\n[Network Analyzer] PERMISSION ERROR: {err}")
-            print(f"[Network Analyzer] Fix:\n{fix}\n")
-        except OSError as e:
-            err = f"OSError on interface '{self.interface}': {e}"
-            self._set_status(CAPTURE_IFACE_MISSING, error=err,
-                             fix=f"Set NETWORK_INTERFACE to a valid interface. Available: {', '.join(get_available_interfaces())}")
-            self.running = False
-            print(f"[Network Analyzer] INTERFACE ERROR: {err}")
+            ip = pkt.getlayer(scapy.IP) or pkt.getlayer(scapy.IPv6)
+            tcp, udp = pkt.getlayer(scapy.TCP), pkt.getlayer(scapy.UDP)
+            layer = tcp or udp
+            proto = "TCP" if tcp else "UDP" if udp else "ICMP" if pkt.haslayer(scapy.ICMP) else "OTHER"
+            self.enqueue({
+                "ts": float(pkt.time), "src_ip": ip.src if ip else "", "dst_ip": ip.dst if ip else "",
+                "src_port": layer.sport if layer else 0, "dst_port": layer.dport if layer else 0,
+                "protocol": proto, "size": len(pkt), "flags": pkt.sprintf("%TCP.flags%") if tcp else ""})
         except Exception as e:
-            err = f"Capture failed: {e}"
-            self._set_status(CAPTURE_FAILED, error=err)
-            self.running = False
-            print(f"[Network Analyzer] CAPTURE FAILED: {err}")
-            import traceback
-            traceback.print_exc()
+            self.last_error = f"{type(e).__name__}: {e}"
+            self.counters["invalid"] += 1
 
-        if self._status not in (CAPTURE_STOPPED, CAPTURE_PERM_DENIED,
-                                CAPTURE_IFACE_MISSING, CAPTURE_FAILED):
-            self._set_status(CAPTURE_STOPPED)
+    def enqueue(self, raw):
+        try:
+            self._q.put_nowait(raw)
+            return True
+        except queue.Full:
+            self.counters["dropped"] += 1
+            return False
 
-    def process_packet(self, packet_data: dict) -> dict:
-        self.packet_count += 1
-        self.byte_count += packet_data.get('size', 0)
+    def _work(self):
+        while not self._stop.is_set():
+            try:
+                raw = self._q.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            try:
+                self.process_packet(raw)
+            except Exception as e:
+                self.last_error = f"{type(e).__name__}: {e}"
 
-        protocol = packet_data.get('protocol', 'Unknown')
-        self.protocol_stats[protocol] += 1
+    def process_packet(self, raw):
+        """validate, account, detect. returns the alerts raised so tests can call this directly"""
+        p = normalize_packet(raw, now=time.time())
+        if p is None:
+            self.counters["invalid"] += 1
+            return []
+        alerts = []
+        with self._lock:
+            self.counters["packets"] += 1
+            self.counters["bytes"] += p["size"]
+            self.last_packet_at = p["ts"]
+            self.ring.append(p)
+            self.telemetry.record_packet(p)
+            for det in self.detectors:
+                a = det.analyze(p)
+                if a:
+                    alerts.append(a)
+            if self.flow_analyzer is not None:
+                a = self.flow_analyzer.update(p)
+                if a:
+                    alerts.append(a)
+            if self.ml_detector is not None:
+                alerts.extend(self._ml_alerts(self.ml_detector.observe(p)))
+            for a in alerts:
+                self._attach_samples(a)
+        for a in alerts:
+            self.counters["alerts"] += 1
+            if self.on_alert:
+                self.on_alert(a)
+        return alerts
 
-        src_ip = packet_data.get('src_ip')
-        dst_ip = packet_data.get('dst_ip')
+    def tick(self, now=None):
+        """periodic housekeeping: close the ml window and expire flows"""
+        now = now or time.time()
+        if self.flow_analyzer is not None:
+            self.flow_analyzer.cleanup_expired_flows(now)
+        if self.ml_detector is not None:
+            for a in self._ml_alerts(self.ml_detector.flush(now)):
+                self.counters["alerts"] += 1
+                if self.on_alert:
+                    self.on_alert(a)
 
-        self.ip_stats[src_ip]['packets'] += 1
-        self.ip_stats[src_ip]['bytes'] += packet_data.get('size', 0)
+    @staticmethod
+    def _ml_alerts(anomalies):
+        return [{
+            "type": "ANOMALY", "severity": "HIGH" if a["score"] >= 0.75 else "MEDIUM", "source": a["source"],
+            "score": a["score"], "score_kind": "anomaly_score", "rule": "isolation_forest.v1", "ts": time.time(),
+            "description": f"{a['source']} deviated from the learned traffic baseline "
+                           f"({', '.join(c['feature'] for c in a['contributors'])})",
+            "evidence": {"observed": {"features": a["features"], "contributors": a["contributors"]},
+                         "thresholds": {"anomaly_score": None}, "window_seconds": a["window_seconds"]},
+        } for a in anomalies]
 
-        dst_port = packet_data.get('dst_port', 0)
-        self.port_stats[dst_port] += 1
-
-        self.recent_packets.append(packet_data)
-
-        flow_key = self._get_flow_key(packet_data)
-        if flow_key in self.active_flows:
-            self.active_flows[flow_key]['packet_count'] += 1
-            self.active_flows[flow_key]['byte_count'] += packet_data.get('size', 0)
-            self.active_flows[flow_key]['last_seen'] = time.time()
+    def _attach_samples(self, alert):
+        src, dst, port = alert.get("source"), alert.get("destination"), alert.get("dst_port")
+        if alert["type"] == "ANOMALY":
+            match = lambda p: p["src_ip"] == src
+        elif alert["type"] in ("DDOS",):
+            match = lambda p: p["dst_ip"] == dst and (not port or p["dst_port"] == port)
         else:
-            self.active_flows[flow_key] = {
-                'first_seen': time.time(),
-                'last_seen': time.time(),
-                'packet_count': 1,
-                'byte_count': packet_data.get('size', 0)
-            }
+            match = lambda p: (not src or p["src_ip"] == src) and (not dst or p["dst_ip"] == dst) and (
+                not port or p["dst_port"] == port or alert["type"] == "PORT_SCAN")
+        alert.setdefault("evidence", {})["sample_packets"] = sample_packets(self.ring, match)
 
-        threats = []
+    def recent_packets(self, src=None, dst=None, since=None, until=None, limit=50):
+        with self._lock:
+            out = []
+            for p in reversed(self.ring):
+                if until is not None and p["ts"] > until:
+                    continue
+                if since is not None and p["ts"] < since:
+                    break
+                if src and p["src_ip"] != src and p["dst_ip"] != src:
+                    continue
+                if dst and p["dst_ip"] != dst and p["src_ip"] != dst:
+                    continue
+                out.append(p)
+                if len(out) >= limit:
+                    break
+            out.reverse()
+            return out
 
-        scan_alert = self.port_scan_detector.analyze(packet_data)
-        if scan_alert:
-            threats.append(scan_alert)
-            self._add_alert(scan_alert)
-
-        ddos_alert = self.ddos_detector.analyze(packet_data)
-        if ddos_alert:
-            threats.append(ddos_alert)
-            self._add_alert(ddos_alert)
-
-        brute_alert = self.brute_force_detector.analyze(packet_data)
-        if brute_alert:
-            threats.append(brute_alert)
-            self._add_alert(brute_alert)
-
-        if self.ml_detector and threats == []:
-            ml_result = self.ml_detector.detect_anomaly(packet_data)
-            if ml_result['is_anomaly']:
-                ml_alert = {
-                    'type': 'ANOMALY',
-                    'severity': ml_result['threat_level'],
-                    'score': ml_result['threat_score'],
-                    'source': src_ip,
-                    'target': dst_ip,
-                    'description': f'ML detected anomaly: {ml_result["anomaly_type"]}',
-                    'timestamp': packet_data['timestamp']
-                }
-                threats.append(ml_alert)
-                self._add_alert(ml_alert)
-
-        return {
-            'packet_id': self.packet_count,
-            'timestamp': packet_data['timestamp'],
-            'packet_data': packet_data,
-            'threats_detected': threats,
-            'is_malicious': len(threats) > 0
-        }
-
-    def _add_alert(self, alert: dict):
-        with self.alert_lock:
-            self.recent_alerts.append(alert)
-
-    def get_recent_alerts(self) -> list[dict]:
-        with self.alert_lock:
-            alerts = list(self.recent_alerts)
-            self.recent_alerts.clear()
-            return alerts
-
-    def _get_flow_key(self, packet_data: dict) -> tuple:
-        return (
-            packet_data.get('src_ip'),
-            packet_data.get('dst_ip'),
-            packet_data.get('src_port', 0),
-            packet_data.get('dst_port', 0),
-            packet_data.get('protocol')
-        )
-
-    def get_statistics(self) -> dict:
-        current_time = time.time()
-        expired_flows = [
-            k for k, v in self.active_flows.items()
-            if current_time - v['last_seen'] > self.flow_timeout
-        ]
-        for k in expired_flows:
-            del self.active_flows[k]
-
-        return {
-            'packet_count': self.packet_count,
-            'byte_count': self.byte_count,
-            'bytes_mb': round(self.byte_count / 1024 / 1024, 2),
-            'active_flows': len(self.active_flows),
-            'unique_ips': len(self.ip_stats),
-            'protocol_distribution': dict(self.protocol_stats),
-            'top_talkers': sorted(
-                [(ip, stats['packets']) for ip, stats in self.ip_stats.items()],
-                key=lambda x: x[1],
-                reverse=True
-            )[:10],
-            'top_ports': sorted(
-                [(port, count) for port, count in self.port_stats.items()],
-                key=lambda x: x[1],
-                reverse=True
-            )[:10]
-        }
-
-class PortScanDetector:
-    def __init__(self, threshold=3, time_window=60):
-        self.threshold = threshold
-        self.time_window = time_window
-        self.scan_data = defaultdict(lambda: defaultdict(set))
-        self.scan_attempts = {}
-        self.alerted = set()
-
-    def analyze(self, packet_data: dict) -> dict:
-        src_ip = packet_data.get('src_ip')
-        dst_ip = packet_data.get('dst_ip')
-        dst_port = packet_data.get('dst_port')
-        protocol = packet_data.get('protocol')
-
-        if protocol not in ['TCP', 'UDP']:
-            return None
-
-        if not src_ip or not dst_ip or src_ip == '' or dst_ip == '':
-            return None
-        if src_ip.startswith('224.') or dst_ip.startswith('224.'):
-            return None
-        if src_ip.startswith('169.254.') or dst_ip.startswith('169.254.'):
-            return None
-        if src_ip.startswith('255.') or dst_ip.startswith('255.'):
-            return None
-
-        self.scan_data[src_ip][dst_ip].add(dst_port)
-        unique_ports = len(self.scan_data[src_ip][dst_ip])
-
-        self.scan_attempts[src_ip] = {
-            'port_count': unique_ports,
-            'target': dst_ip,
-            'timestamp': datetime.now().isoformat()
-        }
-
-        if unique_ports >= self.threshold:
-            alert_key = f"{src_ip}->{dst_ip}"
-            if alert_key not in self.alerted:
-                self.alerted.add(alert_key)
-                print(f"[ALERT] Port scan detected: {src_ip} → {dst_ip} ({unique_ports} ports)")
-
-                return {
-                    'type': 'PORT_SCAN',
-                    'severity': 'HIGH',
-                    'source': src_ip,
-                    'target': dst_ip,
-                    'port_count': unique_ports,
-                    'description': f"Port scan: {src_ip} contacted {unique_ports} ports on {dst_ip}",
-                    'timestamp': packet_data['timestamp']
-                }
-
-        return None
-
-
-class DDoSDetector:
-    def __init__(self, threshold=200, time_window=10):
-        self.threshold = threshold
-        self.time_window = time_window
-        self.traffic_buffer = defaultdict(deque)
-        self.traffic_counts = {}
-        self.alerted = set()
-
-    def analyze(self, packet_data: dict) -> dict:
-        dst_ip = packet_data.get('dst_ip')
-        dst_port = packet_data.get('dst_port')
-        current_time = time.time()
-
-        if not dst_ip or dst_ip == '':
-            return None
-        if dst_ip.startswith('224.') or dst_ip.startswith('255.') or dst_ip == '0.0.0.0':
-            return None
-        if dst_ip.startswith('169.254.'):
-            return None
-        if dst_port in [5353, 1900, 137, 138, 67, 68]:
-            return None
-
-        target = f"{dst_ip}:{dst_port}"
-        self.traffic_buffer[target].append(current_time)
-
-        while (self.traffic_buffer[target] and
-               current_time - self.traffic_buffer[target][0] > self.time_window):
-            self.traffic_buffer[target].popleft()
-
-        packet_rate = len(self.traffic_buffer[target])
-
-        self.traffic_counts[target] = {
-            'count': packet_rate,
-            'timestamp': datetime.now().isoformat()
-        }
-
-        if packet_rate >= self.threshold:
-            if target not in self.alerted:
-                self.alerted.add(target)
-                print(f"[ALERT] DDoS attack detected: {target} ({packet_rate} packets in {self.time_window}s)")
-
-                return {
-                    'type': 'DDOS_ATTACK',
-                    'severity': 'CRITICAL',
-                    'target': target,
-                    'packet_rate': packet_rate,
-                    'description': f"DDoS attack targeting {target} ({packet_rate} packets in {self.time_window}s)",
-                    'timestamp': packet_data['timestamp']
-                }
-        else:
-            self.alerted.discard(target)
-
-        return None
-
-
-class BruteForceDetector:
-    def __init__(self, threshold=5, time_window=60):
-        self.threshold = threshold
-        self.time_window = time_window
-        self.attempts = defaultdict(deque)
-        self.attempt_counts = {}
-        self.alerted = set()
-        self.sensitive_ports = [21, 22, 23, 3389, 445, 3306, 5432]
-
-    def analyze(self, packet_data: dict) -> dict:
-        dst_ip = packet_data.get('dst_ip')
-        dst_port = packet_data.get('dst_port')
-        src_ip = packet_data.get('src_ip')
-        protocol = packet_data.get('protocol')
-
-        if dst_port not in self.sensitive_ports or protocol != 'TCP':
-            return None
-
-        if not src_ip or not dst_ip or src_ip == '' or dst_ip == '':
-            return None
-
-        current_time = time.time()
-        target = f"{src_ip}->{dst_ip}:{dst_port}"
-
-        self.attempts[target].append(current_time)
-
-        while (self.attempts[target] and
-               current_time - self.attempts[target][0] > self.time_window):
-            self.attempts[target].popleft()
-
-        attempt_count = len(self.attempts[target])
-
-        self.attempt_counts[target] = {
-            'count': attempt_count,
-            'timestamp': datetime.now().isoformat()
-        }
-
-        if attempt_count >= self.threshold:
-            if target not in self.alerted:
-                self.alerted.add(target)
-                print(f"[ALERT] Brute force detected: {target} ({attempt_count} attempts in {self.time_window}s)")
-
-                return {
-                    'type': 'BRUTE_FORCE',
-                    'severity': 'HIGH',
-                    'source': src_ip,
-                    'target': f"{dst_ip}:{dst_port}",
-                    'attempt_count': attempt_count,
-                    'description': f"Brute force: {attempt_count} attempts from {src_ip} to {dst_ip}:{dst_port}",
-                    'timestamp': packet_data['timestamp']
-                }
-
-        return None
-
-
+    def get_statistics(self):
+        return {"packet_count": self.counters["packets"], "byte_count": self.counters["bytes"],
+                "dropped_packets": self.counters["dropped"], "invalid_packets": self.counters["invalid"],
+                "active_flows": self.flow_analyzer.get_network_intelligence()["active_flows"] if self.flow_analyzer else 0}

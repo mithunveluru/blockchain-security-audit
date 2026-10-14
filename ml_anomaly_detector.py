@@ -1,286 +1,132 @@
-import numpy as np
-from datetime import datetime
+"""per-source behavioural anomaly detection using scikit-learn's IsolationForest.
+
+the model learns a baseline from traffic this process has observed, so a baseline learned while an
+attack is already present will treat that behaviour as normal. scores are anomaly scores, not probabilities
+"""
+import threading
 from collections import deque
-import hashlib
 
-class IsolationForestSimulator:
-    def __init__(self, contamination=0.1, n_estimators=100):
-        self.contamination = contamination
-        self.n_estimators = n_estimators
-        self.is_fitted = False
+import numpy as np
 
-    def fit(self, X):
-        self.is_fitted = True
-        self.baseline_mean = np.mean(X, axis=0) if len(X) > 0 else np.zeros(X.shape[1] if len(X.shape) > 1 else 1)
-        self.baseline_std = np.std(X, axis=0) if len(X) > 0 else np.ones(X.shape[1] if len(X.shape) > 1 else 1)
+try:
+    from sklearn.ensemble import IsolationForest
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    SKLEARN_AVAILABLE = False
 
-    def predict(self, X):
-        if not self.is_fitted:
-            return np.array([-1] * len(X))
-        scores = []
-        for x in X:
-            z_score = np.abs((x - self.baseline_mean) / (self.baseline_std + 1e-10))
-            is_anomaly = np.any(z_score > 3.0)
-            scores.append(-1 if is_anomaly else 1)
-        return np.array(scores)
-
-    def decision_function(self, X):
-        if not self.is_fitted:
-            return np.array([0.0] * len(X))
-        scores = []
-        for x in X:
-            z_score = np.abs((x - self.baseline_mean) / (self.baseline_std + 1e-10))
-            score = -np.mean(z_score)
-            scores.append(score)
-        return np.array(scores)
+FEATURES = ["packets_per_s", "bytes_per_s", "mean_packet_size", "distinct_dst_ips", "distinct_dst_ports", "syn_ratio"]
+MIN_PACKETS = 10
+MAX_SOURCES = 2000
+RETRAIN_EVERY = 500
 
 
 class MLAnomalyDetector:
-    def __init__(self, learning_window_days=7):
-        self.learning_window_days = learning_window_days
-        self.learning_window_seconds = learning_window_days * 24 * 3600
+    def __init__(self, window_s=10, min_train=200, threshold=0.65, seed=0):
+        self.window_s = window_s
+        self.min_train = min_train
+        self.threshold = threshold
+        self.seed = seed
+        self._win_start = None
+        self._acc = {}
+        self._lock = threading.Lock()
+        self.train = deque(maxlen=5000)
+        self.model = None
+        self._since_fit = 0
+        self.median = None
+        self.mad = None
+        self.stats = {"windows": 0, "scored": 0, "anomalies": 0, "fits": 0}
 
-        self.isolation_forest = IsolationForestSimulator(
-            contamination=0.1,
-            n_estimators=100
-        )
+    @property
+    def state(self):
+        if not SKLEARN_AVAILABLE:
+            return "unavailable"
+        return "ready" if self.model is not None else "learning"
 
-        self.training_buffer = deque(maxlen=10000)
-        self.is_trained = False
+    def status(self):
+        return {"state": self.state, "samples": len(self.train), "samples_needed": self.min_train,
+                "window_seconds": self.window_s, "threshold": self.threshold, "features": FEATURES,
+                "score_meaning": "uncalibrated isolation-forest anomaly score, 0 to 1; higher is more unusual",
+                **self.stats}
 
-        self.feature_names = [
-            'hour_of_day', 'day_of_week', 'log_level', 'message_length',
-            'ip_entropy', 'session_uniqueness', 'inter_arrival_time',
-            'error_frequency', 'alert_frequency', 'source_diversity'
-        ]
+    def observe(self, p):
+        """add a packet; returns anomalies from a window that just closed, if any"""
+        with self._lock:
+            out = []
+            if self._win_start is None:
+                self._win_start = p["ts"]
+            elif p["ts"] - self._win_start >= self.window_s:
+                out = self._close(p["ts"])
+                self._win_start = p["ts"]
+            if not p["src_ip"]:
+                return out
+            a = self._acc.get(p["src_ip"])
+            if a is None:
+                if len(self._acc) >= MAX_SOURCES:
+                    return out
+                a = self._acc[p["src_ip"]] = {"n": 0, "bytes": 0, "dst": set(), "ports": set(), "syn": 0}
+            a["n"] += 1
+            a["bytes"] += p["size"]
+            if len(a["dst"]) < 512:
+                a["dst"].add(p["dst_ip"])
+            if len(a["ports"]) < 1024:
+                a["ports"].add(p["dst_port"])
+            a["syn"] += p["flags"] == "S"
+            return out
 
-        self.threat_stats = {
-            'total_analyzed': 0,
-            'anomalies_detected': 0,
-            'false_positives': 0,
-            'true_positives': 0,
-            'threat_distribution': {
-                'port_scan': 0,
-                'brute_force': 0,
-                'data_exfil': 0,
-                'privilege_escalation': 0,
-                'unusual_access': 0,
-                'resource_exhaustion': 0
-            }
-        }
+    def flush(self, now):
+        with self._lock:
+            if self._win_start is not None and now - self._win_start >= self.window_s:
+                out = self._close(now)
+                self._win_start = now
+                return out
+        return []
 
-        self.thresholds = {
-            'low': 30,
-            'medium': 60,
-            'high': 80,
-            'critical': 95
-        }
+    def _close(self, now):
+        span = max(now - self._win_start, 1.0)
+        rows, srcs = [], []
+        for src, a in self._acc.items():
+            if a["n"] < MIN_PACKETS:
+                continue
+            rows.append([a["n"] / span, a["bytes"] / span, a["bytes"] / a["n"], len(a["dst"]), len(a["ports"]),
+                         a["syn"] / a["n"]])
+            srcs.append(src)
+        self._acc = {}
+        self.stats["windows"] += 1
+        if not rows or not SKLEARN_AVAILABLE:
+            return []
+        X = np.array(rows, dtype=float)
+        anomalies = []
+        if self.model is not None:
+            raw = -self.model.score_samples(np.log1p(X))
+            for i, score in enumerate(raw):
+                self.stats["scored"] += 1
+                if score >= self.threshold:
+                    self.stats["anomalies"] += 1
+                    anomalies.append(self._explain(srcs[i], X[i], float(score), span))
+        flagged = {a["source"] for a in anomalies}
+        for i, src in enumerate(srcs):
+            if src not in flagged:
+                self.train.append(X[i])
+                self._since_fit += 1
+        if len(self.train) >= self.min_train and (self.model is None or self._since_fit >= RETRAIN_EVERY):
+            self._fit()
+        return anomalies
 
-        print(f"[ML Detector] window={learning_window_days}d features={len(self.feature_names)}")
+    def _fit(self):
+        data = np.log1p(np.array(self.train))
+        self.model = IsolationForest(n_estimators=100, contamination="auto", random_state=self.seed).fit(data)
+        self.median = np.median(data, axis=0)
+        self.mad = np.median(np.abs(data - self.median), axis=0) + 1e-6
+        self._since_fit = 0
+        self.stats["fits"] += 1
 
-    def extract_features(self, log_entry: dict) -> np.ndarray:
-        try:
-            if 'timestamp' in log_entry:
-                ts = datetime.fromisoformat(log_entry['timestamp'].replace('Z', '+00:00'))
-                hour_of_day = ts.hour
-                day_of_week = ts.weekday()
-            else:
-                hour_of_day = 12
-                day_of_week = 3
-
-            level_encoding = {
-                'INFO': 0,
-                'WARN': 1,
-                'ERROR': 2,
-                'ALERT': 3
-            }
-            log_level = level_encoding.get(log_entry.get('level', 'INFO'), 0)
-
-            message = log_entry.get('message', '')
-            message_length = len(message)
-
-            source_ip = log_entry.get('source_ip', '0.0.0.0')
-            ip_parts = [int(p) for p in source_ip.split('.') if p.isdigit()]
-            ip_entropy = np.std(ip_parts) if len(ip_parts) == 4 else 0
-
-            session_id = log_entry.get('session_id', 'none')
-            session_hash = int(hashlib.md5(session_id.encode()).hexdigest()[:8], 16)
-            session_uniqueness = session_hash % 100
-
-            inter_arrival_time = 3.0
-            error_frequency = 0.1 if log_level >= 2 else 0.0
-            alert_frequency = 0.05 if log_level == 3 else 0.0
-            source_diversity = len(set(source_ip.split('.'))) / 4.0
-
-            features = np.array([
-                hour_of_day,
-                day_of_week,
-                log_level,
-                message_length,
-                ip_entropy,
-                session_uniqueness,
-                inter_arrival_time,
-                error_frequency,
-                alert_frequency,
-                source_diversity
-            ])
-
-            return features
-
-        except Exception as e:
-            print(f"[Warning] Feature extraction error: {e}")
-            return np.zeros(len(self.feature_names))
-
-    def train(self, historical_logs: list[dict]):
-        features = [self.extract_features(log) for log in historical_logs]
-        self.training_buffer.extend(features)
-
-        if len(features) < 100:
-            print(f"[ML Detector] train: only {len(features)} samples, need 100+")
-            return
-
-        self.isolation_forest.fit(np.array(features))
-        self.is_trained = True
-        print(f"[ML Detector] trained on {len(features)} samples")
-
-    def detect_anomaly(self, log_entry: dict) -> dict:
-        self.threat_stats['total_analyzed'] += 1
-
-        features = self.extract_features(log_entry)
-
-        if self.is_trained:
-            X = features.reshape(1, -1)
-            if_prediction = self.isolation_forest.predict(X)[0]
-            if_score = self.isolation_forest.decision_function(X)[0]
-
-            if_threat_score = max(0, min(40, int((1 - if_score) * 40)))
-        else:
-            if_prediction = 1
-            if_threat_score = 0
-
-        heuristic_score = self._calculate_heuristic_score(log_entry, features)
-        temporal_score = self._calculate_temporal_score(log_entry)
-        lstm_score = self._simulate_lstm_score(features)
-
-        threat_score = if_threat_score + heuristic_score + temporal_score + lstm_score
-        threat_score = max(0, min(100, threat_score))
-
-        if threat_score < self.thresholds['low']:
-            threat_level = 'NORMAL'
-            is_anomaly = False
-        elif threat_score < self.thresholds['medium']:
-            threat_level = 'LOW'
-            is_anomaly = True
-        elif threat_score < self.thresholds['high']:
-            threat_level = 'MEDIUM'
-            is_anomaly = True
-        elif threat_score < self.thresholds['critical']:
-            threat_level = 'HIGH'
-            is_anomaly = True
-        else:
-            threat_level = 'CRITICAL'
-            is_anomaly = True
-
-        anomaly_type = self._identify_threat_type(log_entry, features, threat_score)
-
-        if is_anomaly:
-            self.threat_stats['anomalies_detected'] += 1
-            self.threat_stats['threat_distribution'][anomaly_type] += 1
-
-        confidence = min(1.0, threat_score / 100.0)
-
-        result = {
-            'is_anomaly': is_anomaly,
-            'threat_score': threat_score,
-            'threat_level': threat_level,
-            'anomaly_type': anomaly_type,
-            'confidence': round(confidence, 3),
-            'components': {
-                'isolation_forest': if_threat_score,
-                'heuristics': heuristic_score,
-                'temporal': temporal_score,
-                'lstm': lstm_score
-            },
-            'features': {
-                name: round(float(val), 2)
-                for name, val in zip(self.feature_names, features)
-            }
-        }
-
-        return result
-
-    def _calculate_heuristic_score(self, log_entry: dict, features: np.ndarray) -> int:
-        score = 0
-        message = log_entry.get('message', '').lower()
-
-        if any(kw in message for kw in ['failed', 'error', 'denied', 'blocked']):
-            score += 5
-
-        if any(kw in message for kw in ['attack', 'intrusion', 'breach', 'unauthorized']):
-            score += 10
-
-        if log_entry.get('level') in ['ERROR', 'ALERT']:
-            score += 5
-
-        return min(20, score)
-
-    def _calculate_temporal_score(self, log_entry: dict) -> int:
-        score = 0
-
-        try:
-            ts = datetime.fromisoformat(log_entry.get('timestamp', '').replace('Z', '+00:00'))
-            hour = ts.hour
-
-            if 0 <= hour < 5:
-                score += 5
-
-            if ts.weekday() >= 5:
-                score += 3
-        except:
-            pass
-
-        return min(10, score)
-
-    def _simulate_lstm_score(self, features: np.ndarray) -> int:
-        if not self.is_trained or len(self.training_buffer) < 100:
-            return 0
-
-        recent_features = np.array(list(self.training_buffer)[-1000:])
-        baseline_mean = np.mean(recent_features, axis=0)
-        baseline_std = np.std(recent_features, axis=0) + 1e-10
-
-        z_scores = np.abs((features - baseline_mean) / baseline_std)
-        max_deviation = np.max(z_scores)
-
-        lstm_score = int(min(30, max_deviation * 10))
-
-        return lstm_score
-
-    def _identify_threat_type(self, log_entry: dict, features: np.ndarray, threat_score: int) -> str:
-        message = log_entry.get('message', '').lower()
-
-        if 'port' in message or 'scan' in message:
-            return 'port_scan'
-        elif 'failed login' in message or 'brute' in message:
-            return 'brute_force'
-        elif 'exfil' in message or 'download' in message:
-            return 'data_exfil'
-        elif 'privilege' in message or 'escalation' in message:
-            return 'privilege_escalation'
-        elif 'memory' in message or 'cpu' in message:
-            return 'resource_exhaustion'
-        else:
-            return 'unusual_access'
-
-    def get_statistics(self) -> dict:
-        total = self.threat_stats['total_analyzed']
-        anomalies = self.threat_stats['anomalies_detected']
+    def _explain(self, src, row, score, span):
+        z = np.abs((np.log1p(row) - self.median) / (1.4826 * self.mad))
+        order = np.argsort(-z)[:3]
         return {
-            'total_logs_analyzed': total,
-            'anomalies_detected': anomalies,
-            'anomaly_rate': round(anomalies / total * 100, 2) if total > 0 else 0,
-            'false_positive_rate': round(self.threat_stats['false_positives'] / anomalies * 100, 2) if anomalies > 0 else 0,
-            'threat_distribution': self.threat_stats['threat_distribution'],
-            'is_trained': self.is_trained,
-            'training_samples': len(self.training_buffer),
+            "source": src, "score": score, "window_seconds": round(span, 1),
+            "features": {n: round(float(v), 3) for n, v in zip(FEATURES, row)},
+            "contributors": [{"feature": FEATURES[i], "value": round(float(row[i]), 3),
+                              "baseline_median": round(float(np.expm1(self.median[i])), 3),
+                              "robust_z": round(float(z[i]), 1)} for i in order],
         }

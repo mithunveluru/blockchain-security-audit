@@ -1,0 +1,15 @@
+.git
+.venv
+.env
+.env.*
+!.env.example
+**/__pycache__
+tests
+bench
+data
+*.pem
+*.key
+network_blockchain.json
+*.checkpoint
+*.legacy.bak
+AGENTS.md

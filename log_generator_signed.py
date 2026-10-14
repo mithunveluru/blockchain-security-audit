@@ -2,7 +2,7 @@
 import json
 import random
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime
 
 def generate_log_entry(device_id="device-001"):
     timestamp = datetime.utcnow().isoformat() + "Z"

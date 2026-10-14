@@ -5,7 +5,7 @@ import importlib
 import subprocess
 from dataclasses import dataclass
 
-_REQUIRED_PACKAGES = ["flask", "flask_socketio", "eventlet", "numpy", "watchdog", "Crypto"]
+_REQUIRED_PACKAGES = ["flask", "flask_socketio", "simple_websocket", "numpy", "sklearn"]
 _CAPTURE_PACKAGES  = ["scapy"]
 
 
@@ -172,7 +172,7 @@ def check_interpreter_mismatch() -> CheckResult:
 
     for candidate in candidates:
         try:
-            check_cmd = f"import {', '.join(m for m in missing if m != 'Crypto')}"
+            check_cmd = f"import {', '.join(m for m in missing if m != 'sklearn')}"
             result = subprocess.run(
                 [candidate, "-c", check_cmd],
                 capture_output=True, text=True, timeout=5,
@@ -210,10 +210,14 @@ def check_blockchain_file(path: str) -> CheckResult:
         return CheckResult(name="blockchain_file", ok=True, note=f"{path} does not exist — will be created on first run")
     try:
         with open(path) as f:
-            data = json.load(f)
-        return CheckResult(name="blockchain_file", ok=True, note=f"{path}: {len(data)} blocks")
+            lines = [ln for ln in f.read().splitlines() if ln.strip()]
+        if lines and lines[0].lstrip().startswith("["):
+            return CheckResult(name="blockchain_file", ok=True, note=f"{path}: legacy json array, migrated on first start")
+        for ln in lines:
+            json.loads(ln)
+        return CheckResult(name="blockchain_file", ok=True, note=f"{path}: {len(lines)} blocks")
     except json.JSONDecodeError as e:
-        return CheckResult(name="blockchain_file", ok=False, error=f"Corrupted blockchain JSON: {e}")
+        return CheckResult(name="blockchain_file", ok=False, error=f"Unparseable ledger record: {e}")
     except PermissionError as e:
         return CheckResult(name="blockchain_file", ok=False, error=f"Cannot read blockchain file: {e}")
 
@@ -236,12 +240,10 @@ def run_all(interface: str, chain_file: str) -> list[CheckResult]:
         check_interpreter_mismatch(),
         _check_import("flask", "flask"),
         _check_import("flask_socketio", "flask-socketio"),
-        _check_import("eventlet", "eventlet"),
+        _check_import("simple_websocket", "simple-websocket"),
         check_scapy(),
         _check_import("numpy", "numpy"),
         _check_import("sklearn", "scikit-learn"),
-        _check_import("watchdog", "watchdog"),
-        _check_import("Crypto", "pycryptodome"),
         check_raw_socket_permission(),
         check_interface(interface),
         check_blockchain_file(chain_file),
@@ -279,8 +281,8 @@ def print_report(results: list[CheckResult], fail_on_errors: bool = True) -> boo
 
 if __name__ == "__main__":
     import sys as _sys
-    _interface = _sys.argv[1] if len(_sys.argv) > 1 else "wlp0s20f3"
-    _chain = "network_blockchain.json"
+    _interface = _sys.argv[1] if len(_sys.argv) > 1 else os.environ.get("NETWORK_INTERFACE", "eth0")
+    _chain = os.environ.get("CHAIN_FILE", "network_blockchain.json")
     results = run_all(_interface, _chain)
     ok = print_report(results)
     _sys.exit(0 if ok else 1)

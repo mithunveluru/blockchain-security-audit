@@ -1,8 +1,6 @@
-# Python
+# python
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
 .Python
 venv/
 env/
@@ -11,33 +9,42 @@ env/
 dist/
 build/
 .eggs/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
-# Environment
+# environment
 .env
 .env.*
 !.env.example
 
-# Keys & secrets
+# keys and secrets
 *.pem
 *.key
 *.p12
 *.pfx
+*.crt
+secrets/
 
-# Generated data
+# runtime state: ledger, checkpoints, recovery files, investigations, whitelist
+data/
 network_blockchain.json
+*.checkpoint
+*.lock
+*.legacy.bak
+*.corrupt-*
+*.recovered-*
+*.tmp.*
+investigations.json
+whitelist.json
 generated_network_logs.json
+reports/
+bench/results/
 
-# IDE
+# ide and os
 .vscode/
 .idea/
 *.swp
-*.swo
-
-# OS
 .DS_Store
 Thumbs.db
-
-# Test artifacts
-.coverage
-htmlcov/
-.pytest_cache/

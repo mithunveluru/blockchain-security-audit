@@ -1,297 +1,109 @@
 #!/usr/bin/env python3
-
+"""re-verifies the on-disk ledger against the copy held in memory and the independent checkpoint"""
 import os
-import time
-import json
-import hashlib
-from datetime import datetime
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
 import threading
-import copy
+import time
+from collections import deque
+
+from blockaudit.ledger import utcnow
+
 
 class IntegrityMonitor:
-    def __init__(self, blockchain_file, alert_callback=None, check_interval=30):
-        self.blockchain_file = blockchain_file
+    def __init__(self, ledger, alert_callback=None, check_interval=30, poll_interval=1.0):
+        self.ledger = ledger
         self.alert_callback = alert_callback
         self.check_interval = check_interval
-
-        self.last_valid_state = None
-        self.last_valid_chain = None
-        self.last_check_time = None
+        self.poll_interval = poll_interval
+        self.alerts = deque(maxlen=200)
         self.tampering_detected = False
-        self.alerts = []
-
+        self.last_check_time = None
+        self.last_ok_time = None
+        self.last_error = None
+        self.checks = 0
         self.running = False
-        self.monitor_thread = None
-        self.observer = None
-
-        print("[Integrity Monitor] Initialized")
+        self._thread = None
+        self._stop = threading.Event()
+        self._signature = None
+        self._seen_stat = None
 
     def start(self):
         if self.running:
             return
-
+        self._stop.clear()
         self.running = True
-
-        self._store_baseline()
-
-        self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
-        self.monitor_thread.start()
-        self._start_file_watcher()
-
-        print("[Integrity Monitor] Started - checking every {}s".format(self.check_interval))
+        self._seen_stat = self._stat()
+        self._thread = threading.Thread(target=self._loop, name="integrity-monitor", daemon=True)
+        self._thread.start()
 
     def stop(self):
         self.running = False
-        if self.observer:
-            self.observer.stop()
-            self.observer.join()
-        print("[Integrity Monitor] Stopped")
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=5)
 
-    def _store_baseline(self):
+    def alive(self):
+        return bool(self._thread and self._thread.is_alive())
+
+    def _stat(self):
         try:
-            if os.path.exists(self.blockchain_file):
-                with open(self.blockchain_file, 'r') as f:
-                    chain = json.load(f)
-                    self.last_valid_chain = copy.deepcopy(chain)
-                    print(f"[Integrity Monitor] Baseline stored: {len(chain)} blocks")
-        except Exception as e:
-            print(f"[Integrity Monitor] Could not store baseline: {e}")
+            st = os.stat(self.ledger.path)
+            return (st.st_size, st.st_mtime_ns)
+        except OSError:
+            return None
 
-    def _start_file_watcher(self):
-        class BlockchainFileHandler(FileSystemEventHandler):
-            def __init__(self, monitor):
-                self.monitor = monitor
-
-            def on_modified(self, event):
-                if event.src_path.endswith(self.monitor.blockchain_file):
-                    print("[File Watcher] Blockchain modified - verifying...")
-                    self.monitor._verify_now()
-
-        event_handler = BlockchainFileHandler(self)
-        self.observer = Observer()
-        watch_dir = os.path.dirname(self.blockchain_file) or '.'
-        self.observer.schedule(event_handler, watch_dir, recursive=False)
-        self.observer.start()
-
-    def _monitor_loop(self):
-        while self.running:
+    def _loop(self):
+        next_full = 0.0
+        while not self._stop.is_set():
             try:
-                self._verify_now()
-                time.sleep(self.check_interval)
+                now = time.monotonic()
+                changed = self._stat() != self.ledger.expected_stat() and self._stat() != self._seen_stat
+                if changed or now >= next_full:
+                    self.check_now()
+                    next_full = time.monotonic() + self.check_interval
             except Exception as e:
-                print(f"[Integrity Monitor] Error: {e}")
-                time.sleep(5)
+                self.last_error = f"{type(e).__name__}: {e}"
+            self._stop.wait(self.poll_interval)
 
-    def _verify_now(self):
-        self.last_check_time = datetime.now()
-
-        if not os.path.exists(self.blockchain_file):
-            self._raise_alert("CRITICAL", "BLOCKCHAIN_DELETED", 
-                            "Blockchain file has been DELETED!",
-                            forensics={
-                                'deleted': True,
-                                'last_known_blocks': len(self.last_valid_chain) if self.last_valid_chain else 0
-                            })
-            return
-
-        try:
-            with open(self.blockchain_file, 'r') as f:
-                current_chain = json.load(f)
-        except Exception as e:
-            self._raise_alert("CRITICAL", "BLOCKCHAIN_CORRUPTED",
-                            f"Cannot read blockchain: {e}",
-                            forensics={'error': str(e)})
-            return
-
-        is_valid, forensics = self._forensic_analysis(current_chain)
-
-        if not is_valid:
-            self.tampering_detected = True
-
-            message = self._build_forensic_report(forensics)
-
-            self._raise_alert("CRITICAL", "BLOCKCHAIN_TAMPERED", message, forensics)
-        else:
+    def check_now(self):
+        result = self.ledger.verify_disk()
+        self._seen_stat = self._stat()
+        self.checks += 1
+        self.last_check_time = utcnow()
+        if result["valid"]:
+            self.last_ok_time = self.last_check_time
             if self.tampering_detected:
-                self._raise_alert("INFO", "BLOCKCHAIN_RESTORED",
-                                "Blockchain integrity restored", {})
                 self.tampering_detected = False
+                self._signature = None
+                self._raise("INFO", "LEDGER_RESTORED", "ledger verification passes again", result)
+        else:
+            sig = tuple((f["index"], f["check"]) for f in result["failures"][:20])
+            if not self.tampering_detected or sig != self._signature:
+                self._raise("CRITICAL", "LEDGER_TAMPERED", self._describe(result), result)
+            self.tampering_detected = True
+            self._signature = sig
+        return result
 
-            self.last_valid_chain = copy.deepcopy(current_chain)
-            self.last_valid_state = {
-                'block_count': len(current_chain),
-                'tip_hash': current_chain[-1]['hash'],
-                'timestamp': datetime.now().isoformat()
-            }
-
-    def _forensic_analysis(self, current_chain):
-        forensics = {
-            'total_blocks': len(current_chain),
-            'tampered_blocks': [],
-            'changes_detected': [],
-            'severity': 'NONE'
-        }
-
-        if len(current_chain) == 0:
-            forensics['severity'] = 'CRITICAL'
-            forensics['changes_detected'].append('Blockchain is empty')
-            return False, forensics
-
-        if self.last_valid_chain:
-            forensics['baseline_blocks'] = len(self.last_valid_chain)
-
-            if len(current_chain) < len(self.last_valid_chain):
-                deleted_count = len(self.last_valid_chain) - len(current_chain)
-                forensics['changes_detected'].append(
-                    f'{deleted_count} block(s) DELETED from chain'
-                )
-                forensics['severity'] = 'CRITICAL'
-            elif len(current_chain) > len(self.last_valid_chain):
-                # New blocks added legitimately — no tampering concern, chain will be verified below
-                pass
-
-        for i in range(1, len(current_chain)):
-            current = current_chain[i]
-            previous = current_chain[i-1]
-
-            block_tampering = {}
-
-            calculated_hash = self._calculate_hash(current)
-            if current['hash'] != calculated_hash:
-                block_tampering['hash_mismatch'] = True
-                block_tampering['stored_hash'] = current['hash']
-                block_tampering['calculated_hash'] = calculated_hash
-                forensics['severity'] = 'CRITICAL'
-
-            if current['previous_hash'] != previous['hash']:
-                block_tampering['link_broken'] = True
-                block_tampering['expected_prev_hash'] = previous['hash']
-                block_tampering['actual_prev_hash'] = current['previous_hash']
-                forensics['severity'] = 'CRITICAL'
-
-            if self.last_valid_chain and i < len(self.last_valid_chain):
-                baseline_block = self.last_valid_chain[i]
-                changes = self._compare_blocks(baseline_block, current)
-                if changes:
-                    block_tampering['field_changes'] = changes
-                    forensics['severity'] = 'HIGH'
-
-            if block_tampering:
-                forensics['tampered_blocks'].append({
-                    'block_index': i,
-                    'tampering': block_tampering
-                })
-
-        is_valid = len(forensics['tampered_blocks']) == 0 and forensics['severity'] == 'NONE'
-
-        return is_valid, forensics
-
-    def _compare_blocks(self, baseline, current):
-        changes = []
-
-        fields_to_check = ['index', 'timestamp', 'data', 'previous_hash', 'hash']
-
-        for field in fields_to_check:
-            if baseline.get(field) != current.get(field):
-                change_info = {
-                    'field': field,
-                    'original': str(baseline.get(field))[:100],
-                    'modified': str(current.get(field))[:100]
-                }
-                changes.append(change_info)
-
-        return changes
-
-    def _build_forensic_report(self, forensics):
-        lines = ["TAMPERING DETECTED - FORENSIC ANALYSIS:\n"]
-
-        lines.append(f"Total Blocks: {forensics['total_blocks']}")
-
-        if 'baseline_blocks' in forensics:
-            lines.append(f"Baseline Blocks: {forensics['baseline_blocks']}")
-
-        if forensics['changes_detected']:
-            lines.append(f"\nCRITICAL CHANGES:")
-            for change in forensics['changes_detected']:
-                lines.append(f"   • {change}")
-
-        if forensics['tampered_blocks']:
-            lines.append(f"\nTAMPERED BLOCKS: {len(forensics['tampered_blocks'])}")
-
-            for tampered in forensics['tampered_blocks'][:5]:
-                block_idx = tampered['block_index']
-                tampering = tampered['tampering']
-
-                lines.append(f"\n   Block #{block_idx}:")
-
-                if tampering.get('hash_mismatch'):
-                    lines.append(f"      Hash Mismatch Detected")
-                    lines.append(f"         Stored:     {tampering['stored_hash'][:16]}...")
-                    lines.append(f"         Calculated: {tampering['calculated_hash'][:16]}...")
-
-                if tampering.get('link_broken'):
-                    lines.append(f"      Chain Link Broken")
-
-                if tampering.get('field_changes'):
-                    lines.append(f"      Field Changes:")
-                    for change in tampering['field_changes'][:3]:
-                        lines.append(f"         • {change['field'].upper()}:")
-                        lines.append(f"           Before: {change['original'][:50]}...")
-                        lines.append(f"           After:  {change['modified'][:50]}...")
-
-            if len(forensics['tampered_blocks']) > 5:
-                lines.append(f"\n   ... and {len(forensics['tampered_blocks']) - 5} more tampered blocks")
-
+    @staticmethod
+    def _describe(result):
+        lines = [result["message"]]
+        for f in result["failures"][:5]:
+            where = f"block {f['index']}" if f["index"] is not None else "ledger"
+            lines.append(f"{where}: {f['check']} - {f['detail']}")
+        if result["failure_count"] > 5:
+            lines.append(f"and {result['failure_count'] - 5} more failure(s)")
         return "\n".join(lines)
 
-    def _calculate_hash(self, block):
-        block_data = json.dumps({
-            'index': block['index'],
-            'timestamp': block['timestamp'],
-            'data': block['data'],
-            'previous_hash': block['previous_hash']
-        }, sort_keys=True)
-        return hashlib.sha256(block_data.encode()).hexdigest()
-
-    def _raise_alert(self, severity, alert_type, message, forensics):
-        alert = {
-            'timestamp': datetime.now().isoformat(),
-            'severity': severity,
-            'type': alert_type,
-            'message': message,
-            'forensics': forensics,
-            'last_valid_state': self.last_valid_state
-        }
-
+    def _raise(self, severity, kind, message, result):
+        alert = {"timestamp": utcnow(), "severity": severity, "type": kind, "message": message,
+                 "forensics": {"failures": result["failures"][:20], "failure_count": result["failure_count"],
+                               "block_count": result["block_count"], "checks": result["checks"],
+                               "first_failure_index": result["first_failure_index"]}}
         self.alerts.append(alert)
-
-        print(f"\n{'='*70}")
-        print(f"INTEGRITY ALERT - {severity}")
-        print(f"{'='*70}")
-        print(f"Type: {alert_type}")
-        print(f"Time: {alert['timestamp']}")
-        print(f"\n{message}")
-
-        if forensics and severity == 'CRITICAL':
-            print(f"\nFORENSIC DETAILS:")
-            if 'tampered_blocks' in forensics:
-                print(f"   Tampered Blocks: {len(forensics['tampered_blocks'])}")
-                for tb in forensics['tampered_blocks'][:3]:
-                    print(f"   • Block #{tb['block_index']}")
-
-        print(f"{'='*70}\n")
-
         if self.alert_callback:
             self.alert_callback(alert)
 
     def get_status(self):
-        return {
-            'running': self.running,
-            'last_check': self.last_check_time.isoformat() if self.last_check_time else None,
-            'tampering_detected': self.tampering_detected,
-            'last_valid_state': self.last_valid_state,
-            'total_alerts': len(self.alerts),
-            'recent_alerts': self.alerts[-10:]
-        }
+        return {"running": self.running, "last_check": self.last_check_time, "last_ok": self.last_ok_time,
+                "tampering_detected": self.tampering_detected, "checks": self.checks,
+                "total_alerts": len(self.alerts), "recent_alerts": list(self.alerts)[-10:],
+                "check_interval_seconds": self.check_interval, "last_error": self.last_error}

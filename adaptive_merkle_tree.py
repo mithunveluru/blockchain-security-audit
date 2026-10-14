@@ -37,10 +37,12 @@ class AdaptiveMerkleTree:
 
     def optimize(self):
         # Sort by descending access frequency so most-used leaves are near root
-        freq_heap = [(-count, idx) for idx, count in self.access_freq.items()]
+        freq_heap = [(-count, idx) for idx, count in self.access_freq.items() if idx < len(self.leaves)]
         heapq.heapify(freq_heap)
-        reordered = [self.leaves[idx] for neg_count, idx in freq_heap]
-        self.leaves = reordered
+        order = [idx for _, idx in (heapq.heappop(freq_heap) for _ in range(len(freq_heap)))]
+        placed = set(order)
+        order += [i for i in range(len(self.leaves)) if i not in placed]
+        self.leaves = [self.leaves[i] for i in order]
         self.build()
 
     def get_proof(self, idx):
@@ -54,8 +56,9 @@ class AdaptiveMerkleTree:
             level = self.tree[level_idx]
             sibling_pos = pos ^ 1
             is_left = (pos % 2 == 0)
-            if sibling_pos < len(level):
-                path.append((level[sibling_pos], is_left))
+            # an unpaired node is hashed with itself when the tree is built
+            sibling = level[sibling_pos] if sibling_pos < len(level) else level[pos]
+            path.append((sibling, is_left))
             pos //= 2
 
         return path
