@@ -87,6 +87,8 @@ def source_url(rid, kind):
         return f"#/alerts/{rid}"
     if kind == "ledger_block":
         return f"#/ledger/{rid.split('-', 1)[1]}"
+    if kind == "context":
+        return f"#/alerts/{rid[4:]}?tab=timeline"
     if kind == "health":
         return "#/health"
     return "#/ledger"
@@ -128,6 +130,16 @@ class CopilotTools:
             self.add_alert(bundle, r)
         bundle.ran("related_alerts", {"id": alert["id"]}, f"{len(rel)} related")
         return rel
+
+    def network_context(self, bundle, alert):
+        c = self.svc.alert_context(alert)
+        bundle.add(f"ctx-{alert['id']}", "context", _clean({
+            "window_seconds": c["window_seconds"], "packets_before": c["before_count"], "packets_after": c["after_count"],
+            "sample_before": c["before"][-5:], "sample_after": c["after"][:5], "complete": c["complete"], "note": c["note"],
+            "flows": [{k: f[k] for k in ("initiator", "dst_ip", "dst_port", "protocol", "packets", "bytes")} for f in c["flows"][:5]]}),
+            "network context")
+        bundle.ran("network_context", {"id": alert["id"]}, f"{c['before_count']} before, {c['after_count']} after")
+        return c
 
     def ledger_block(self, bundle, index):
         b = self.svc.ledger.get(index)
@@ -227,6 +239,8 @@ class Copilot:
             alert = found or alert
             if found:
                 t.related_alerts(b, alert)
+                if any(w in ql for w in ("before", "after", "around", "happen", "context", "timeline", "flow", "sequence")):
+                    t.network_context(b, alert)
                 if alert.get("ledger_index") is not None:
                     t.ledger_block(b, alert["ledger_index"])
         ips = [ip for ip in (valid_ip(x) for x in IP_RE.findall(question)[:3]) if ip]
@@ -271,6 +285,12 @@ class Copilot:
                                         "running service's copy; it does not by itself show who changed it", "refs": [r["id"]]})
                     rec.append({"text": "preserve the data directory, compare against a trusted backup and checkpoint, "
                                         "and review who can write to it", "refs": [r["id"]]})
+            elif r["kind"] == "context":
+                note = f" ({d['note']})" if d.get("note") else ""
+                obs.append({"text": f"within {d['window_seconds']}s of the alert, {d['packets_before']} retained packets involving the same "
+                                    f"addresses came before it and {d['packets_after']} after{note}", "refs": [r["id"]]})
+                if not d.get("complete"):
+                    miss.append({"text": "the earlier part of the window is no longer in memory; only retained packet headers can be shown"})
             elif r["kind"] == "health":
                 bad = [c for c in d["components"] if c["state"] != "healthy"]
                 obs.append({"text": f"system status {d['status']}; " + (", ".join(f"{c['name']} {c['state']}" for c in bad) or "all components healthy"),
@@ -298,7 +318,19 @@ class Copilot:
             miss.append({"text": "no matching records were found for this question"})
         elif not alerts and not any(r["kind"] != "health" for r in b.records.values()):
             miss.append({"text": "no alerts matched; the answer reflects system health only"})
-        return {"observed": obs[:20], "inferred": inf[:10], "recommendations": rec[:10], "missing": miss[:10]}
+        def uniq(items):
+            seen, out = set(), []
+            for it in items:
+                if it["text"] not in seen:
+                    seen.add(it["text"])
+                    out.append(it)
+                else:
+                    prior = next(o for o in out if o["text"] == it["text"])
+                    prior["refs"] = sorted(set(prior.get("refs", [])) | set(it.get("refs", []))) if "refs" in prior else None
+                    if prior["refs"] is None:
+                        del prior["refs"]
+            return out
+        return {"observed": uniq(obs)[:20], "inferred": uniq(inf)[:10], "recommendations": uniq(rec)[:10], "missing": uniq(miss)[:10]}
 
     def _llm(self, b, question):
         records = list(b.records.values())

@@ -59,7 +59,32 @@ packet worker ─► validate ─► rule detectors ─► flow table ─► ML 
 | `integrity_monitor.py` | continuous ledger verification |
 | `blockaudit/alerts.py` | alert history, whitelist, investigation status and notes |
 | `blockaudit/copilot.py`, `blockaudit/reports.py` | copilot tools and validation; incident reports |
-| `static/` | dashboard (vanilla JS modules, no build step, no CDN) |
+| `static/` | the dashboard: ES modules, CSS design system, self-hosted fonts; no build step, no CDN (see Frontend) |
+
+## Frontend
+
+One single-page app under `static/`, served by Flask at `/` (`/soc` redirects there). There is no Node build and no CDN: the browser loads ES modules, three stylesheets, two self-hosted variable fonts (Inter and JetBrains Mono, SIL OFL, licences next to the files) and the vendored Socket.IO client (MIT). This keeps the strict Content-Security-Policy (`default-src 'self'`, no inline script or style) and avoids a build-time supply chain in a security product. Production serving is unchanged: gunicorn serves `/static`; put gzip or brotli at the reverse proxy.
+
+Layout of the code:
+
+| Path | Role |
+| --- | --- |
+| `static/css/tokens.css`, `app.css`, `views.css` | dark-first tokens with a complete light theme, components, page layouts |
+| `static/js/main.js` | shell, router (views update in place when only the selection changes), auth, Socket.IO, copilot drawer, shortcuts |
+| `static/js/core/` | DOM builders that never use `innerHTML`, API client, formatting, time-range state, motion policy |
+| `static/js/ui/` | components (tabs, menus, dialogs, tooltips, toasts, error boundary), SVG chart kit, relationship map (2D canvas), command palette, copilot conversation, JSON highlighting |
+| `static/js/views/` | overview, alerts explorer with investigation pane, network, ledger, health, copilot, settings; each is a lazily loaded module |
+
+Design decisions worth knowing:
+
+- **No framework.** Nothing requested needed one: route transitions use the View Transitions API, entrances use CSS, charts are small SVG builders, the map is a 2D canvas. React, Vite and Tailwind would add a build chain without adding capability here. If the UI grows well beyond seven views, revisit that.
+- **Everything shown is real data.** No chart or number is generated client-side. Empty ranges show empty states; simulated data is labelled in the top bar, on every alert and in reports.
+- **Severity is never colour-only:** each level has its own shape (diamond, triangle, circle, ring, dash) and a text label; component states use shape too.
+- **Motion:** short transitions and a one-time settle of the relationship map; no idle animation. `prefers-reduced-motion`, or Settings then Reduce motion, switches off all transitions, entrances, view transitions and the map's settling. Alerts arrive as a quiet highlight and a toast, never flashing.
+- **Live updates:** one authenticated Socket.IO connection; alert events are batched (400 ms) before views see them, lists show a "new alerts" prompt instead of reordering under the cursor, chart histories are bounded (240 points), and every view releases its timers, observers and listeners when you leave it. The top bar shows Live, Stale, Reconnecting or Disconnected, and views reload after a reconnect.
+- **Accessibility target is WCAG 2.2 AA:** semantic landmarks and headings, skip link, visible focus, keyboard-operable tabs, menus, palette, charts (arrow keys) and the relationship map (arrow keys, Enter), tooltips that appear on focus, native dialogs, live regions for status and toasts, 44 px touch targets in the mobile tab bar. It was tested with automated checks and by hand in Chrome; it has not been audited with a screen reader or a formal tool.
+
+Shortcuts: `Ctrl/Cmd K` palette, `/` search alerts, `j` and `k` next and previous alert, `g` then `o a n l h c s` to jump to a page, `.` copilot, `Esc` close.
 
 ## Configuration
 
@@ -128,8 +153,8 @@ All routes need a bearer token unless stated. JSON errors look like `{"error": "
 | `GET /healthz`, `GET /readyz` | none | liveness, readiness (`ready` only) |
 | `GET /api/me` | viewer | role, mode, rule catalogue, copilot status |
 | `GET /api/overview?range=` | viewer | summary for 5m, 15m, 1h, 6h, 24h, 7d |
-| `GET /api/alerts` | viewer | `q, severity, type, source, destination, status, provenance, range` or `since`/`until`, `sort, order, page, page_size` |
-| `GET /api/alerts/<id>`, `GET .../report?format=md` or `json` | viewer | detail with evidence, related alerts, ledger record; incident report |
+| `GET /api/alerts` | viewer | `q, severity, type, source, destination, status, provenance, range` or `since`/`until`, `sort, order, page, page_size`; the response includes `facets` (counts per severity, type, status and data source for the current filters) |
+| `GET /api/alerts/<id>`, `GET .../context`, `GET .../report?format=md` or `json` | viewer | detail with evidence, related alerts, ledger record; retained packet headers and flows within 120 s either side; incident report |
 | `PATCH /api/alerts/<id>`, `POST .../notes` | analyst | investigation status, notes |
 | `GET /api/network`, `GET /api/network/flows` | viewer | traffic breakdowns, active flows |
 | `GET /api/ledger/status`, `/blocks`, `/blocks/<n>`, `/checkpoint`, `GET` or `POST /api/ledger/verify` | viewer (POST: analyst) | ledger views, verification |
@@ -156,13 +181,29 @@ Without a model it answers deterministically from the records (tested). With `AN
 .venv/bin/pytest                      # unit, security, reliability, end-to-end
 .venv/bin/ruff check .                # lint and security rules
 node scripts/check_ui_imports.mjs     # every frontend import resolves
+.venv/bin/pytest tests/ui             # browser tests; needs Chrome or Chromium (CHROME_PATH)
 .venv/bin/pip-audit -r requirements.txt
 .venv/bin/python bench/bench.py --legacy <dir with the old modules>
 ```
 
-Tests cover ledger integrity and recovery, detector positives and negatives, API validation, authentication, rate limits, CORS, oversized bodies, error disclosure, WebSocket auth, the investigation workflow end to end, threaded simulation mode, degraded health, queue overflow, copilot grounding and prompt-injection handling, and repository hygiene (no key material, no secrets). Live packet capture is not covered by automated tests (it needs privileges). The browser UI was exercised manually in Chrome (desktop width, and a narrow-width emulation); there are no automated browser tests.
+Tests cover ledger integrity and recovery, detector positives and negatives, API validation, authentication, rate limits, CORS, oversized bodies, error disclosure, WebSocket auth, the investigation workflow end to end, threaded simulation mode, degraded health, queue overflow, copilot grounding and prompt-injection handling, and repository hygiene (no key material, no secrets). Live packet capture is not covered by automated tests (it needs privileges). `tests/ui` drives real Chrome through Playwright against a running instance: sign-in, every route with a clean console, no horizontal overflow at 375, 768, 1024, 1440 and 1920 px, the investigation workflow (list, evidence, timeline, ledger check, copilot sources), filters, command palette, keyboard and tab navigation, theme persistence, reduced motion, chart tooltips, the relationship map, tampered-ledger explanations, server disconnect and reconnect, empty and degraded states, viewer-role restrictions, that server text can never become markup, and an axe-core WCAG 2.2 AA audit (zero violations on every view, both themes, desktop and phone widths). They skip themselves if no browser is available.
 
-### Measured performance
+### Measured frontend
+
+Chrome 145 headless on the same machine, simulation mode, unthrottled, served by the Flask development server.
+
+| Measure | Result |
+| --- | --- |
+| cold load of Overview, first meaningful render | 235 ms including the API call |
+| application JS loaded for Overview | 79 KB, 21 requests in total with CSS, fonts and Socket.IO |
+| all app JS, CSS and HTML on disk | 198 KB, 67 KB gzipped (Flask does not compress; do it at the proxy) |
+| fonts, Socket.IO client | 86 KB, 49 KB |
+| burst of 8 attack scenarios, about 14,000 packets, 11 alerts, Overview open | 0 long tasks over 50 ms; DOM 361 to 486 nodes; JS heap 3.1 to 3.2 MB |
+| navigating to Overview from another page (fetch and render) | 106 ms |
+
+These are one-machine, one-run measurements, not a benchmark suite.
+
+### Measured backend
 
 Python 3.12.3, Linux 7.0, 8 logical CPUs, single process, synthetic benign workload.
 

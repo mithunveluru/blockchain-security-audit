@@ -2,7 +2,7 @@ import ipaddress
 from collections import Counter, OrderedDict, deque
 from functools import lru_cache
 
-from .events import packet_summary
+from .events import packet_summary, utc_iso
 
 SENSITIVE_PORTS = {21: "ftp", 22: "ssh", 23: "telnet", 445: "smb", 1433: "mssql", 3306: "mysql", 3389: "rdp",
                    5432: "postgres", 5900: "vnc"}
@@ -195,7 +195,7 @@ class BruteForceDetector:
                            f"within {self.time_window}s",
             "evidence": {"observed": {"connection_attempts": len(q), "service": svc,
                                       "distinct_source_ports": len({sp for _, sp in q}),
-                                      "first_attempt": q[0][0], "last_attempt": q[-1][0]},
+                                      "first_attempt": utc_iso(q[0][0]), "last_attempt": utc_iso(q[-1][0])},
                          "thresholds": self.describe(), "window_seconds": self.time_window},
         }
 

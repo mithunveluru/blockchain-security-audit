@@ -167,7 +167,7 @@ class SecurityService:
         elif im["tampering_detected"]:
             comps.append(_comp("integrity_monitor", DEGRADED, "tampering detected; see the audit ledger", last_check=im["last_check"]))
         else:
-            comps.append(_comp("integrity_monitor", HEALTHY, f"{im['checks']} checks; last ok {im['last_ok']}", last_check=im["last_check"]))
+            comps.append(_comp("integrity_monitor", HEALTHY, f"{im['checks']} verification checks completed", last_check=im["last_check"]))
         ls = self.ledger.status()
         lv = ls["last_verification"]
         if ls["last_write_error"]:
@@ -208,6 +208,27 @@ class SecurityService:
             overall = "ok"
         return {"status": overall, "components": comps, "data_mode": self.provenance, "time": utc_iso(),
                 "uptime_seconds": round(time.time() - self.started_at), "running": self.running}
+
+    def alert_context(self, alert, window=120):
+        """packets still held in memory around an alert that involve its source or destination"""
+        from .events import packet_summary, parse_time
+        t = parse_time(alert["timestamp"]).timestamp()
+        ips = {x for x in (alert.get("source"), alert.get("destination")) if x}
+        ring = list(self.analyzer.ring)
+        oldest = ring[0]["ts"] if ring else None
+        rows = [p for p in ring if t - window <= p["ts"] <= t + window and (p["src_ip"] in ips or p["dst_ip"] in ips)]
+        before = [packet_summary(p) for p in rows if p["ts"] < t][-25:]
+        after = [packet_summary(p) for p in rows if p["ts"] >= t][:25]
+        flows = self.flows.snapshot(10, src=alert.get("source")) if alert.get("source") else []
+        covered = oldest is not None and oldest <= t - window
+        note = None
+        if not ring:
+            note = "no packets are held in memory"
+        elif not covered:
+            note = "packets from before this point have already rolled out of memory, so the earlier window may be incomplete"
+        return {"window_seconds": window, "retained_from": oldest and packet_summary(ring[0])["time"], "before": before,
+                "after": after, "before_count": sum(1 for p in rows if p["ts"] < t), "after_count": sum(1 for p in rows if p["ts"] >= t),
+                "flows": flows, "complete": bool(covered), "note": note, "data_mode": self.provenance}
 
     def overview(self, range_name="1h"):
         secs = range_seconds(range_name)

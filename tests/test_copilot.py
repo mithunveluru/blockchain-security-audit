@@ -182,3 +182,12 @@ def test_api_endpoint_validates_and_works_without_model(env):
     r = c.post("/api/copilot/ask", json={"question": "why was this raised?", "alert_id": aid}, headers=hdr(VIEWER))
     assert r.status_code == 200 and r.get_json()["mode"] == "deterministic"
     assert c.get("/api/me", headers=hdr(VIEWER)).get_json()["copilot"]["mode"] == "deterministic"
+
+
+def test_before_after_question_uses_network_context_tool(env):
+    _, svc, aid = env
+    r = Copilot(svc, Provider()).ask("What happened before and after this event?", alert_id=aid)
+    assert any(t["tool"] == "network_context" for t in r["tools_run"])
+    assert f"ctx-{aid}" in ids(r) and "retained packets" in r["answer"]
+    src = next(s for s in r["sources"] if s["id"] == f"ctx-{aid}")
+    assert src["url"] == f"#/alerts/{aid}?tab=timeline"

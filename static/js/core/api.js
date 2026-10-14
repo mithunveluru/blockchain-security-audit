@@ -6,7 +6,7 @@ export const session = {
 export class ApiError extends Error {
   constructor(status, message, body) { super(message); this.status = status; this.body = body; }
 }
-export const events = new EventTarget();
+export const bus = new EventTarget();
 
 export async function api(path, { method = 'GET', body, signal, raw } = {}) {
   let res;
@@ -18,9 +18,10 @@ export async function api(path, { method = 'GET', body, signal, raw } = {}) {
     });
   } catch (e) {
     if (e.name === 'AbortError') throw e;
+    bus.dispatchEvent(new CustomEvent('offline'));
     throw new ApiError(0, 'The server is unreachable.');
   }
-  if (res.status === 401) { events.dispatchEvent(new Event('unauthorized')); throw new ApiError(401, 'Your session is not valid. Sign in again.'); }
+  if (res.status === 401) { bus.dispatchEvent(new Event('unauthorized')); throw new ApiError(401, 'Your session is not valid. Sign in again.'); }
   if (raw && res.ok) return res;
   let data = null;
   try { data = await res.json(); } catch { /* non-json */ }

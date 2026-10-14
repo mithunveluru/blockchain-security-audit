@@ -1,0 +1,82 @@
+@font-face { font-family: "Inter"; src: url("/static/fonts/inter-var.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "JetBrains Mono"; src: url("/static/fonts/jetbrains-mono-var.woff2") format("woff2"); font-weight: 100 800; font-display: swap; }
+
+:root {
+  color-scheme: dark;
+  --font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --bg: #08090c;
+  --shell: #0b0d11;
+  --panel: #0f1217;
+  --raised: #141821;
+  --hover: #181d27;
+  --active: #1e2431;
+  --line: rgba(255, 255, 255, .07);
+  --line-strong: rgba(255, 255, 255, .13);
+
+  --text: #e9edf3;
+  --text-2: #a4aebe;
+  --text-3: #8a95a5;
+  --text-4: #7d8898;
+
+  --accent: #58a6ff;
+  --accent-2: #33d1f2;
+  --accent-ink: #04101e;
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+
+  --crit: #ff5c6c;
+  --high: #ff9a3d;
+  --med: #f2c14e;
+  --low: #58a6ff;
+  --info: #8b95a7;
+  --ok: #35c88a;
+  --warn: #f2c14e;
+  --bad: #ff5c6c;
+
+  --radius-s: 4px;
+  --radius: 6px;
+  --radius-l: 10px;
+  --sb: 232px;
+  --topbar: 52px;
+
+  --ease: cubic-bezier(.2, .7, .2, 1);
+  --dur-1: 120ms;
+  --dur-2: 200ms;
+  --dur-3: 320ms;
+  --pop: 0 16px 48px rgba(0, 0, 0, .55), 0 0 0 1px var(--line-strong);
+  --glow: 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent), 0 0 24px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f3f5f8;
+  --shell: #fafbfc;
+  --panel: #ffffff;
+  --raised: #f3f5f8;
+  --hover: #ecf0f5;
+  --active: #e3e8f0;
+  --line: rgba(15, 25, 45, .09);
+  --line-strong: rgba(15, 25, 45, .16);
+
+  --text: #10151c;
+  --text-2: #465163;
+  --text-3: #566172;
+  --accent-soft: color-mix(in srgb, var(--accent) 8%, transparent);
+  --text-4: #647082;
+
+  --accent: #1a5fe0;
+  --accent-2: #06708a;
+  --accent-ink: #ffffff;
+
+  --crit: #cf2638;
+  --high: #9c4607;
+  --med: #7a5800;
+  --low: #1a5fe0;
+  --info: #596577;
+  --ok: #0f7d56;
+  --warn: #7a5800;
+  --bad: #cf2638;
+
+  --pop: 0 16px 40px rgba(15, 25, 45, .18), 0 0 0 1px var(--line-strong);
+}

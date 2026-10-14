@@ -238,13 +238,13 @@ def create_app(settings=None, service=None, start=True):
         since, until = time_arg("since"), time_arg("until")
         if since is None and request.args.get("range"):
             since = datetime.fromtimestamp(time.time() - range_seconds(range_arg()), timezone.utc)
-        items, total = svc.alerts.query(
-            q=request.args.get("q", "")[:100], severities=csv_arg("severity", SEVERITIES),
-            types=[t.upper() for t in request.args.get("type", "").split(",") if t] or None,
-            source=ip_arg("source"), destination=ip_arg("destination"), status=status, provenance=prov,
-            since=since, until=until, sort=sort, order=order, page=int_arg("page", 1, 1, 100000),
-            page_size=int_arg("page_size", 25, 1, 100))
-        return jsonify(items=items, total=total, page=int_arg("page", 1, 1, 100000), page_size=int_arg("page_size", 25, 1, 100))
+        filters = dict(q=request.args.get("q", "")[:100], severities=csv_arg("severity", SEVERITIES),
+                       types=[t.upper() for t in request.args.get("type", "").split(",") if t] or None,
+                       source=ip_arg("source"), destination=ip_arg("destination"), status=status, provenance=prov,
+                       since=since, until=until)
+        page, size = int_arg("page", 1, 1, 100000), int_arg("page_size", 25, 1, 100)
+        items, total = svc.alerts.query(sort=sort, order=order, page=page, page_size=size, **filters)
+        return jsonify(items=items, total=total, page=page, page_size=size, facets=svc.alerts.facets(**filters))
 
     def alert_or_404(aid):
         a = svc.alerts.get(aid)
@@ -288,6 +288,11 @@ def create_app(settings=None, service=None, start=True):
             raise ApiError(400, str(e))
         svc.audit(g.principal.id, "alert_note_added", {"alert_id": aid, "note_id": note["id"]})
         return jsonify(note), 201
+
+    @app.route("/api/alerts/<aid>/context")
+    @require("viewer")
+    def alert_context(aid):
+        return jsonify(svc.alert_context(alert_or_404(aid)))
 
     @app.route("/api/alerts/<aid>/report")
     @require("viewer")

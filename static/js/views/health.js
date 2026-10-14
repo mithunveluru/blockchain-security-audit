@@ -1,39 +1,42 @@
-import { api } from '../api.js';
-import { card, clear, errorBox, fmtTime, h, stateBadge, ago, put } from '../ui.js';
+import { api } from '../core/api.js';
+import { h, put, clear } from '../core/dom.js';
+import { fmtClock, ago } from '../core/format.js';
+import { icon } from '../ui/icons.js';
+import { btn, notice, state } from '../ui/components.js';
 
-const labels = { packet_capture: 'Packet capture', flow_analyzer: 'Flow analyzer', ml_detector: 'Anomaly model', integrity_monitor: 'Integrity monitor', ledger: 'Ledger persistence', background_workers: 'Background workers', websocket: 'Live updates (WebSocket)' };
-const meaning = { healthy: 'Working as expected', degraded: 'Running with a problem', unavailable: 'Needed but not working', disabled: 'Turned off' };
+const META = {
+  packet_capture: ['Packet capture', 'cpu', 'Receives packets from the capture interface or the simulator.'], flow_analyzer: ['Flow analyzer', 'network', 'Tracks conversations and flags large outbound transfers.'],
+  ml_detector: ['Anomaly model', 'sparkle', 'Learns normal per-source behaviour and scores deviations.'], integrity_monitor: ['Integrity monitor', 'shield', 'Re-verifies the ledger file against memory and the checkpoint.'],
+  ledger: ['Ledger persistence', 'ledger', 'Writes each alert to the append-only audit ledger.'], background_workers: ['Background workers', 'refresh', 'Packet worker, ticker and monitor threads.'], websocket: ['Live updates', 'wifi', 'Pushes alerts and snapshots to connected dashboards.'],
+};
+const MEANING = { healthy: 'Working as expected', degraded: 'Running with a problem', unavailable: 'Needed but not working', disabled: 'Turned off' };
 
 export default async function health(ctx) {
-  const box = h('div');
-  put(ctx.root, h('div', { class: 'page-head' }, h('div', null, h('h1', null, 'System health'), h('p', null, 'Status of each component. “Unavailable” means a component that should be working is not; the web server being up does not make a sensor healthy.'))), box);
+  ctx.setTitle('System health', 'Components and sensors');
+  ctx.toolbar(null);
+  const host = h('div', { class: 'stack' });
+  put(ctx.root, host);
   let busy = false;
   async function load() {
     if (busy) return; busy = true;
     try {
       const d = await api('/api/health');
-      put(clear(box), 
-        h('div', { class: `notice ${d.status === 'ok' ? 'ok' : d.status === 'degraded' ? 'warn' : 'bad'}` }, h('strong', null, { ok: 'All components healthy. ', degraded: 'Some components need attention. ', critical: 'A critical component has failed. ' }[d.status]),
-          `Data mode: ${d.data_mode.replace('_', ' ')}. Uptime ${fmtUp(d.uptime_seconds)}. Updated ${fmtTime(d.time, false)}.`),
-        h('div', { class: 'grid cols-2' }, d.components.map((c) => card(labels[c.name] || c.name, meaning[c.state],
-          h('div', { class: 'row' }, stateBadge(c.state)), h('p', null, c.detail),
-          c.fix && h('pre', { tabindex: 0 }, c.fix),
-          extras(c)))));
-    } catch (e) { put(clear(box), errorBox(e.message, load)); } finally { busy = false; }
+      const bad = d.components.filter((c) => c.state !== 'healthy' && c.state !== 'disabled');
+      clear(host);
+      put(host,
+        notice(d.status === 'ok' ? 'ok' : d.status === 'degraded' ? 'warn' : 'bad', h('strong', null, { ok: 'Every component is healthy. ', degraded: 'Some components need attention. ', critical: 'A critical component has failed. ' }[d.status]),
+          `Data mode: ${d.data_mode.replace('_', ' ')}. Uptime ${d.uptime_seconds < 120 ? `${d.uptime_seconds}s` : d.uptime_seconds < 7200 ? `${Math.floor(d.uptime_seconds / 60)}m` : `${Math.floor(d.uptime_seconds / 3600)}h`}. Updated ${fmtClock(d.time)} UTC.`, bad.length ? ` Needs attention: ${bad.map((c) => (META[c.name] || [c.name])[0]).join(', ')}.` : ''),
+        h('section', { class: 'panel' }, d.components.map((c) => {
+          const [name, ic, what] = META[c.name] || [c.name, 'info', ''];
+          const extra = [c.last_packet_at && `last packet ${ago(new Date(c.last_packet_at * 1000).toISOString())}`, c.dropped && `${c.dropped} packets dropped under load`, c.queue_depth > 0 && `queue depth ${c.queue_depth}`, c.last_check && `last check ${fmtClock(c.last_check)} UTC`, c.ticker_errors && `${c.ticker_errors} worker errors`, c.checkpoint_error && `checkpoint failing: ${c.checkpoint_error}`, c.phase === 'learning' && `learning baseline ${c.samples} samples`].filter(Boolean);
+          return h('div', { class: 'health-row' }, h('div', { class: 'n' }, icon(ic), name), h('div', { class: 'stack-s' }, h('div', null, c.detail), h('div', { class: 'faint small' }, what), extra.length ? h('div', { class: 'faint small' }, extra.join(' · ')) : null, c.fix ? h('pre', { class: 'code', tabindex: 0 }, c.fix) : null), h('div', { title: MEANING[c.state] }, state(c.state)));
+        })));
+    } catch (e) { if (e.name !== 'AbortError') { clear(host); put(host, notice('bad', e.message, ' ', btn('Retry', { size: 'sm', onclick: load }))); } }
+    finally { busy = false; }
   }
   await load();
-  const poll = setInterval(load, 5000);
-  ctx.on('integrity', load);
-  return () => clearInterval(poll);
+  const poll = setInterval(() => { if (!document.hidden) load(); }, 5000);
+  ctx.onLive('integrity', load); ctx.onLive('reconnected', load);
+  ctx.scope.add(() => clearInterval(poll));
+  return {};
 }
-function extras(c) {
-  const bits = [];
-  if (c.last_packet_at) bits.push(`last packet ${ago(new Date(c.last_packet_at * 1000).toISOString())}`);
-  if (c.dropped) bits.push(`${c.dropped} packets dropped under load`);
-  if (c.queue_depth != null && c.queue_depth > 0) bits.push(`queue depth ${c.queue_depth}`);
-  if (c.last_check) bits.push(`last check ${fmtTime(c.last_check, false)}`);
-  if (c.ticker_errors) bits.push(`${c.ticker_errors} worker errors`);
-  if (c.checkpoint_error) bits.push(`checkpoint write failing: ${c.checkpoint_error}`);
-  return bits.length ? h('p', { class: 'muted small' }, bits.join(' · ')) : null;
-}
-const fmtUp = (s) => (s < 120 ? `${s}s` : s < 7200 ? `${Math.floor(s / 60)}m` : s < 172800 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`);

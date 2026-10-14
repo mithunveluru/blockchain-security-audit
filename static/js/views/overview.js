@@ -1,75 +1,144 @@
-import { api } from '../api.js';
-import { areaChart, barChart, card, chart, clear, empty, fmtBytes, fmtNum, fmtTime, h, put } from '../ui.js';
-import { alertTable, rangeSelect, sevBar } from '../components.js';
+import { api } from '../core/api.js';
+import { h, put, clear, debounce } from '../core/dom.js';
+import { fmtBytes, fmtCompact, fmtNum, fmtClock, typeName, SEVS } from '../core/format.js';
+import { RANGES, domainFor, getRange, setRange } from '../core/range.js';
+import { stagger, tween } from '../core/motion.js';
+
+import { SEV_COLOR, distBars, sevComposition, sparkline, timeChart } from '../ui/charts.js';
+import { boundary, btn, empty, notice, panel, seg, state } from '../ui/components.js';
+import { alertRow } from '../ui/alertrow.js';
+
+const COMP = { packet_capture: 'Packet capture', flow_analyzer: 'Flow analyzer', ml_detector: 'Anomaly model', integrity_monitor: 'Integrity monitor', ledger: 'Ledger persistence', background_workers: 'Background workers', websocket: 'Live updates' };
 
 export default async function overview(ctx) {
-  let range = '1h', data = null, disposers = [], busy = false;
-  try { range = sessionStorage.getItem('blockaudit.range') || '1h'; } catch { /* ignore */ }
-  const shell = h('div');
-  put(ctx.root, shell);
+  let range = getRange(), data = null, chart = null, tab = 'alerts', busy = false;
+  const root = h('div', { class: 'stack' });
+  put(ctx.root, root);
+  ctx.setTitle('Overview', 'Security posture');
+  const toolbar = () => seg(RANGES.map((r) => ({ value: r })), range, (r) => { range = r; setRange(r); load(); }, 'Time range');
+  ctx.toolbar(toolbar());
+  const feedHost = h('ul', { class: 'feed', role: 'list' });
+  const freshIds = new Set();
 
   async function load() {
     if (busy) return;
     busy = true;
-    try { data = await api(`/api/overview?range=${range}`); draw(); } finally { busy = false; }
+    try { data = await api(`/api/overview?range=${range}`); draw(); }
+    catch (e) { if (e.name !== 'AbortError') { clear(root); put(root, notice('bad', h('strong', null, 'Overview unavailable. '), e.message, ' ', btn('Retry', { size: 'sm', onclick: load }))); } }
+    finally { busy = false; }
   }
+
   function draw() {
-    disposers.forEach((d) => d()); disposers = [];
-    clear(shell);
+    chart && chart.destroy(); chart = null;
     const d = data, hs = d.health, a = d.alerts, lg = d.ledger;
     const bad = hs.components.filter((c) => c.state !== 'healthy');
-    const headline = { ok: 'Monitoring is healthy', degraded: 'Monitoring is degraded', critical: 'Attention required' }[hs.status] || hs.status;
-    put(shell, 
-      h('div', { class: 'page-head' },
-        h('div', null, h('h1', null, 'Security overview'), h('p', null, 'Current posture of this deployment: what was detected, whether the evidence is intact, and whether the sensors are working.')),
-        rangeSelect(range, ['5m', '15m', '1h', '6h', '24h', '7d'], (r) => { range = r; try { sessionStorage.setItem('blockaudit.range', r); } catch { /* ignore */ } load(); })),
-      d.data_mode !== 'live_capture' && h('div', { class: 'notice warn' }, h('strong', null, d.data_mode === 'simulation' ? 'Simulation mode. ' : 'Test data. '),
-        'All traffic and alerts below are synthetic and do not describe a real network.'),
-      lg.tampering_detected && h('div', { class: 'notice bad', role: 'alert' }, h('strong', null, 'Ledger integrity failure. '), 'The audit ledger no longer matches its recorded hashes. ', h('a', { href: '#/ledger' }, 'Inspect the failing records')),
-      h('div', { class: 'grid cols-4' },
-        card(null, null, h('div', { class: 'status-hero' }, h('span', { class: `pip ${hs.status}` }), h('div', null, h('h2', null, headline),
-          h('div', { class: 'muted small', style: 'margin-top:4px' }, bad.length ? bad.map((c) => `${c.name.replace(/_/g, ' ')}: ${c.state}`).join(' · ') : 'All components report healthy.'),
-          h('a', { href: '#/health', class: 'small' }, 'System health')))),
-        kpi(`Alerts · last ${range}`, fmtNum(a.total), sevBar(a.by_severity)),
-        kpi(`Packets · last ${range}`, fmtNum(d.traffic.packets), h('span', null, `${fmtBytes(d.traffic.bytes)} · ${d.data_mode === 'live_capture' ? 'observed' : 'synthetic'}`)),
-        kpi('Audit ledger', lg.verified === false ? 'Failed' : lg.verified ? 'Verified' : 'Pending',
-          h('span', null, `${fmtNum(lg.blocks)} blocks`, lg.verified_at ? ` · checked ${fmtTime(lg.verified_at, false)}` : '', ' ', h('a', { href: '#/ledger' }, 'Details')))),
-      h('div', { class: 'grid cols-2', style: 'margin-top:16px' },
-        card('Alerts over time', `${range}, all severities`, chartBox('alerts')),
-        card('Packet rate', `${range}, per ${d.traffic.bucket_seconds}s bucket`, chartBox('packets'))),
-      h('div', { style: 'margin-top:16px' }, card('Recent high-priority alerts', 'HIGH and CRITICAL in range',
-        d.recent_high_priority.length ? alertTable(d.recent_high_priority, (x) => ctx.go(`#/alerts/${encodeURIComponent(x.id)}`), { compact: true })
-          : empty('No high-priority alerts in this range', d.health.components.find((c) => c.name === 'ml_detector')?.state === 'degraded' ? 'The anomaly model is still learning a baseline; rule-based detections are active.' : 'Detection is running. New alerts appear here as they are raised.'),
-        a.total > 0 && h('p', null, h('a', { href: '#/alerts' }, `View all ${fmtNum(a.total)} alerts`)))),
-      guide(d, ctx));
-    const al = d.alert_timeline.map((t) => ({ label: fmtTime(t.t, false).slice(0, 5), values: [t.total - t.high, t.high], title: `${fmtTime(t.t)}: ${t.total} alerts (${t.high} high or critical)` }));
-    const pk = d.traffic.series.map((t) => ({ label: fmtTime(t.t, false).slice(0, 5), value: t.packets / d.traffic.bucket_seconds, title: `${fmtTime(t.t)}: ${(t.packets / d.traffic.bucket_seconds).toFixed(1)} packets/s` }));
-    mount('alerts', al.length ? barChart(al, { colors: ['var(--accent)', 'var(--crit)'] }) : null, 'No alerts in this range.');
-    mount('packets', pk.length ? areaChart(pk, { fmt: (v) => fmtNum(v) }) : null, 'No packets observed in this range.');
+    const hot = (a.by_severity.CRITICAL || 0) + (a.by_severity.HIGH || 0);
+    const status = hs.status === 'ok' ? '' : hs.status === 'degraded' ? 'warn' : 'bad';
+    const headline = lg.tampering_detected ? 'Ledger integrity failure detected'
+      : hot ? `${hot} high-priority ${hot === 1 ? 'alert needs' : 'alerts need'} attention` : a.total ? `${a.total} ${a.total === 1 ? 'alert' : 'alerts'}, none high priority` : 'No alerts in this range';
+    const sub = [hs.status === 'ok' ? 'All components are healthy.' : `${bad.map((c) => `${COMP[c.name] || c.name} ${c.state}`).join(', ')}.`,
+      lg.verified === false ? 'The audit ledger failed verification.' : lg.verified ? `Audit ledger verified at ${fmtClock(lg.verified_at)} UTC.` : 'Audit ledger not yet verified.'].join(' ');
+    const total = d.traffic.series.map((p) => p.packets / d.traffic.bucket_seconds);
+    const sensors = hs.components.filter((c) => c.state === 'healthy').length;
+    const pk = h('span', { 'data-v': '' }), al = h('span'), bl = h('span');
+    clear(root);
+    put(root,
+      d.data_mode !== 'live_capture' && notice('warn', h('strong', null, d.data_mode === 'simulation' ? 'Simulation mode. ' : 'Test data. '), 'Traffic and alerts on this page are synthetic and do not describe a real network.'),
+      h('section', { class: 'panel posture' },
+        h('div', { class: 'lead' }, h('div', { class: 'state-line' }, h('span', { class: `pulse ${status}` }), hs.status === 'ok' ? 'Monitoring healthy' : hs.status === 'degraded' ? 'Monitoring degraded' : 'Attention required'),
+          h('h1', null, headline), h('p', null, sub)),
+        h('div', { class: 'stats' },
+          h('div', { class: 'stat' }, h('div', { class: 'k' }, `Alerts · ${range}`), h('div', { class: 'v' }, al), h('div', { class: 's' }, hot ? h('span', { class: 'sev sev-HIGH' }, `${hot} high or critical`) : 'none high priority')),
+          h('div', { class: 'stat' }, h('div', { class: 'k' }, `Packets · ${range}`), h('div', { class: 'v' }, pk), h('div', { class: 's' }, sparkline(total), h('span', null, fmtBytes(d.traffic.bytes)))),
+          h('div', { class: 'stat' }, h('div', { class: 'k' }, 'Ledger'), h('div', { class: 'v' }, bl), h('div', { class: 's' }, state(lg.verified === false ? 'failed' : lg.verified ? 'passed' : 'unknown', lg.verified === false ? 'failed' : lg.verified ? 'verified' : 'pending'))),
+          h('div', { class: 'stat' }, h('div', { class: 'k' }, 'Components'), h('div', { class: 'v' }, `${sensors}/${hs.components.length}`), h('div', { class: 's' }, bad.length ? `${bad.length} need attention` : 'all healthy')))),
+      h('div', { class: 'ov-grid' },
+        h('div', { class: 'stack' }, activity(d), priority(d)),
+        h('div', { class: 'stack' }, feedPanel(), detections(d), components(hs), chainPanel(lg))));
+    tween(al, a.total); tween(pk, d.traffic.packets, fmtCompact); tween(bl, lg.blocks, fmtNum);
+    stagger(root, ':scope > .panel, .ov-grid > .stack > .panel');
   }
-  const boxes = {};
-  function chartBox(name) { return (boxes[name] = h('div', { class: 'chart' })); }
-  function mount(name, drawFn, emptyText) {
-    if (!drawFn) { boxes[name].append(h('p', { class: 'muted' }, emptyText)); return; }
-    disposers.push(chart(boxes[name], drawFn));
+
+  function activity(d) {
+    const host = h('div', { style: 'padding:14px 16px 12px' });
+    const mount = () => {
+      chart && chart.destroy();
+      const [t0, t1] = domainFor(range);
+      if (tab === 'alerts') {
+        const bucket = Math.max(60, Math.round(((t1 - t0) / 1000) / 60)) * 1000;
+        chart = timeChart(host, { kind: 'bars', stacked: true, bucketMs: bucket, domain: [t0, t1], height: 190, label: `Alerts over time, last ${range}`,
+          series: SEVS.slice(0, 4).map((s) => ({ key: s, label: s[0] + s.slice(1).toLowerCase(), color: SEV_COLOR[s] })),
+          points: d.alert_timeline.map((p) => ({ t: Date.parse(p.t), values: p.sev || {} })), emptyText: 'No alerts in this range',
+          onSelect: (b) => ctx.go(`#/alerts?since=${new Date(b.t).toISOString()}&until=${new Date(b.end).toISOString()}`) });
+      } else {
+        const bs = d.traffic.bucket_seconds * 1000;
+        chart = timeChart(host, { kind: 'area', bucketMs: bs, domain: [t0, t1], height: 190, label: `Packet rate, last ${range}`, tipFormat: (v) => `${v.toFixed(1)} /s`, yFormat: fmtCompact,
+          series: [{ key: 'pps', label: 'Packets per second', color: 'var(--accent)' }], points: d.traffic.series.map((p) => ({ t: Date.parse(p.t), values: { pps: p.packets / d.traffic.bucket_seconds } })),
+          emptyText: 'No packets observed in this range' });
+      }
+    };
+    const sw = h('div');
+    const drawSeg = () => put(clear(sw), seg([{ value: 'alerts', label: 'Alerts' }, { value: 'traffic', label: 'Traffic' }], tab, (v) => { tab = v; mount(); }, 'Chart'));
+    drawSeg(); mount();
+    return panel({ title: 'Activity', hint: `last ${range} · UTC`, actions: sw }, h('div', { style: 'margin:-16px' }, host,
+      tab === 'alerts' ? h('div', { style: 'padding:0 16px 14px' }, sevComposition(d.alerts.by_severity, { onPick: (s) => ctx.go(`#/alerts?severity=${s}&range=${range}`) })) : null));
   }
+
+  function priority(d) {
+    const rows = d.recent_high_priority;
+    if (!rows.length) {
+      const adminSim = ctx.state.me.role === 'admin' && ctx.state.me.scenarios.length;
+      return panel({ title: 'Priority alerts' }, empty(d.alerts.total ? 'No high-priority alerts' : 'Nothing to investigate yet',
+        d.alerts.total ? 'Lower-severity alerts exist in this range.' : d.data_mode === 'simulation' ? 'The simulator is running. Alerts appear when a detection rule fires, or you can trigger a labelled scenario now.' : 'Detection is active. When a rule fires the alert appears here with its evidence.', 'shield',
+        ...(adminSim ? ctx.state.me.scenarios.map((s) => btn(s.replace('_', ' '), { size: 'sm', onclick: () => api(`/api/simulate/${s}`, { method: 'POST' }).catch(() => {}) })) : []),
+        d.alerts.total ? btn('View all alerts', { size: 'sm', onclick: () => ctx.go('#/alerts') }) : null));
+    }
+    return panel({ title: 'Priority alerts', hint: 'high and critical', actions: btn('All alerts', { size: 'sm', kind: 'ghost', onclick: () => ctx.go('#/alerts') }), flush: true },
+      h('ul', { class: 'alist', role: 'listbox', 'aria-label': 'Priority alerts' }, rows.map((a) => alertRow(a, { compact: true, onOpen: (x) => ctx.go(`#/alerts/${x.id}`) }))));
+  }
+
+  function feedPanel() {
+    return panel({ title: 'Live activity', hint: 'newest first', flush: true }, feedHost);
+  }
+  async function loadFeed() {
+    try {
+      const r = await api('/api/alerts?page_size=6&sort=time');
+      renderFeed(r.items);
+    } catch { /* feed is secondary */ }
+  }
+  function renderFeed(items) {
+    clear(feedHost);
+    if (!items.length) { put(feedHost, h('li', { style: 'display:block;cursor:default;color:var(--text-3)' }, 'Waiting for the first alert.')); return; }
+    items.forEach((a) => put(feedHost, h('li', { class: freshIds.has(a.id) ? 'fresh' : '', onclick: () => ctx.go(`#/alerts/${a.id}`) },
+      h('span', { class: 'bar', style: `background:${SEV_COLOR[a.severity]}` }), h('div', null, h('div', { class: 't' }, h('span', null, typeName(a.type)), h('span', { class: 'faint small' }, fmtClock(a.timestamp))), h('div', { class: 'd mono' }, a.source || a.destination || ''), ))));
+  }
+
+  function detections(d) {
+    const rows = Object.entries(d.alerts.by_type).sort((x, y) => y[1] - x[1]).map(([k, v]) => ({ key: k, label: typeName(k), value: v, mono: false }));
+    return panel({ title: 'Detections', hint: `last ${range}` }, distBars(rows, { onPick: (k) => k && ctx.go(`#/alerts?type=${k}&range=${range}`), empty: 'No detections in this range.' }));
+  }
+  function components(hs) {
+    return panel({ title: 'Components', actions: btn('Details', { size: 'sm', kind: 'ghost', onclick: () => ctx.go('#/health') }), flush: true },
+      h('ul', { class: 'comp' }, hs.components.map((c) => h('li', null, h('span', { class: 'n' }, COMP[c.name] || c.name), state(c.state)))));
+  }
+  function chainPanel(lg) {
+    const host = h('div');
+    boundary(host, async () => {
+      const r = await api('/api/ledger/blocks?page_size=5');
+      return h('ol', { class: 'chain', 'aria-label': 'Most recent ledger records' }, r.items.map((b) => h('li', { onclick: () => ctx.go(`#/ledger/${b.index}`), style: 'cursor:pointer' }, h('span', { class: `node ${lg.verified === false ? 'bad' : lg.verified ? 'ok' : ''}` }),
+        h('div', null, h('div', { class: 'idx mono' }, `#${b.index}`, h('span', { class: 'meta', style: 'margin-left:8px;font-family:var(--font)' }, b.kind.toLowerCase().replace('_', ' '))), h('div', { class: 'meta mono' }, `${b.hash.slice(0, 14)}… ← ${b.previous_hash.slice(0, 8)}…`)))));
+    });
+    return panel({ title: 'Audit ledger', hint: `${fmtNum(lg.blocks)} records`, actions: btn('Open', { size: 'sm', kind: 'ghost', onclick: () => ctx.go('#/ledger') }), flush: true }, host);
+  }
+
+  put(root, h('div', { class: 'skeleton', style: 'height:150px;border-radius:10px' }));
   await load();
-  let t = null;
-  const refresh = () => { clearTimeout(t); t = setTimeout(load, 1500); };
-  ctx.on('alert', refresh);
-  const poll = setInterval(load, 15000);
-  return () => { clearInterval(poll); clearTimeout(t); disposers.forEach((d) => d()); };
-}
-
-const kpi = (label, value, sub) => card(null, null, h('div', { class: 'kpi' }, h('div', { class: 'label' }, label), h('div', { class: 'value' }, value), h('div', { class: 'sub' }, sub)));
-
-function guide(d, ctx) {
-  if (d.alerts.total > 0) return null;
-  const admin = ctx.state.me.role === 'admin' && ctx.state.me.scenarios.length;
-  return h('div', { style: 'margin-top:16px' }, card('Getting started', 'shown until the first alert',
-    h('ol', null,
-      h('li', null, d.data_mode === 'simulation' ? 'You are in simulation mode: benign synthetic traffic is flowing and attack scenarios are injected on a timer.' : 'BlockAudit is watching the configured interface. Alerts appear when a detection rule fires.'),
-      h('li', null, 'Open an alert to see why it fired, the packets behind it and the ledger record that preserves it.'),
-      h('li', null, 'Use the ', h('a', { href: '#/copilot' }, 'investigation copilot'), ' to ask questions grounded in those records.')),
-    admin && h('p', null, 'Trigger a synthetic scenario now: ', ctx.state.me.scenarios.map((s) => h('button', { class: 'btn small', style: 'margin-right:6px', onclick: () => api(`/api/simulate/${s}`, { method: 'POST' }).catch(() => {}) }, s.replace('_', ' '))))));
+  loadFeed();
+  const reload = debounce(() => { load(); loadFeed(); }, 1200);
+  ctx.onLive('alerts', (e) => { e.detail.forEach((a) => freshIds.add(a.id)); setTimeout(() => e.detail.forEach((a) => freshIds.delete(a.id)), 2500); reload(); });
+  ctx.onLive('integrity', reload);
+  ctx.onLive('reconnected', reload);
+  const poll = setInterval(() => { if (!document.hidden) load(); }, 20000);
+  ctx.scope.add(() => { clearInterval(poll); chart && chart.destroy(); reload.cancel(); });
+  return { update() {} };
 }

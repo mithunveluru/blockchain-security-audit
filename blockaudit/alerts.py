@@ -233,8 +233,8 @@ class AlertManager:
             a = self._alerts.get(alert_id)
             return self.public(a) if a else None
 
-    def query(self, q=None, severities=None, types=None, source=None, destination=None, status=None,
-              provenance=None, since=None, until=None, sort="time", order="desc", page=1, page_size=25):
+    def _select(self, q=None, severities=None, types=None, source=None, destination=None, status=None,
+                provenance=None, since=None, until=None):
         ql = (q or "").strip().lower()
         with self._lock:
             items = list(self._alerts.values())
@@ -262,6 +262,10 @@ class AlertManager:
             if status and pub["status"] != status:
                 continue
             out.append(pub)
+        return out
+
+    def query(self, sort="time", order="desc", page=1, page_size=25, **filters):
+        out = self._select(**filters)
         keyf = {"severity": lambda a: (SEV_RANK[a["severity"]], a["timestamp"]),
                 "score": lambda a: (a["score"] is not None, a["score"] or 0, a["timestamp"])}.get(
             sort, lambda a: a["timestamp"])
@@ -270,6 +274,20 @@ class AlertManager:
         page_size = max(1, min(int(page_size), 100))
         start = (max(1, int(page)) - 1) * page_size
         return out[start:start + page_size], total
+
+    def facets(self, **filters):
+        """counts for the filter bar: each facet ignores its own selection so options stay visible"""
+        def count(key, skip, getter):
+            f = {k: v for k, v in filters.items() if k != skip}
+            c = {}
+            for a in self._select(**f):
+                k = getter(a)
+                c[k] = c.get(k, 0) + 1
+            return c
+        return {"severity": count("severity", "severities", lambda a: a["severity"]),
+                "type": count("type", "types", lambda a: a["type"]),
+                "status": count("status", "status", lambda a: a["status"]),
+                "provenance": count("provenance", "provenance", lambda a: a["provenance"])}
 
     def counts(self, since=None):
         sev, typ, status = {}, {}, {}
@@ -296,8 +314,10 @@ class AlertManager:
             if ts is None or ts < since:
                 continue
             b = int(ts.timestamp() // bucket_s) * bucket_s
-            row = buckets.setdefault(b, {"t": utc_iso(b), "total": 0, "high": 0})
+            row = buckets.setdefault(b, {"t": utc_iso(b), "total": 0, "high": 0, "sev": {}, "types": {}})
             row["total"] += 1
+            row["sev"][a["severity"]] = row["sev"].get(a["severity"], 0) + 1
+            row["types"][a["type"]] = row["types"].get(a["type"], 0) + 1
             row["high"] += SEV_RANK[a["severity"]] >= SEV_RANK["HIGH"]
         return [buckets[k] for k in sorted(buckets)]
 

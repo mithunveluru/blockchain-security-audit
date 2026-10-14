@@ -5,7 +5,8 @@ import { join, resolve } from 'node:path';
 
 const root = resolve(process.argv[2] || 'static/js');
 const files = [];
-for (const d of ['', 'views']) for (const f of readdirSync(join(root, d))) if (f.endsWith('.js')) files.push(join(root, d, f));
+const walk = (dir) => { for (const e of readdirSync(dir, { withFileTypes: true })) { const p = join(dir, e.name); if (e.isDirectory()) walk(p); else if (e.name.endsWith('.js')) files.push(p); } };
+walk(root);
 const exportsOf = {};
 for (const f of files) {
   const src = readFileSync(f, 'utf8');

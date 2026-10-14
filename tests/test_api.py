@@ -178,3 +178,28 @@ def test_alert_notes_validation(ctx):
     d = c.get(f"/api/alerts/{aid}", headers=hdr(VIEWER)).get_json()
     assert d["investigation"]["notes"][0]["text"] == "checked with owner"
     assert c.get("/api/alerts/alr-doesnotexist", headers=hdr(VIEWER)).status_code == 404
+
+
+def test_facets_ignore_their_own_selection(ctx):
+    c, svc, *_ = ctx
+    svc.alerts.submit({"type": "DDOS", "severity": "CRITICAL", "destination": "192.168.1.5", "dst_port": 80})
+    r = c.get("/api/alerts?severity=CRITICAL", headers=hdr(VIEWER)).get_json()
+    assert r["total"] == 1 and r["facets"]["severity"] == {"HIGH": 1, "CRITICAL": 1}
+    assert r["facets"]["type"] == {"DDOS": 1}
+
+
+def test_alert_context_reports_packets_around_alert_and_coverage(ctx):
+    c, svc, *_ = ctx
+    aid = c.get("/api/alerts", headers=hdr(VIEWER)).get_json()["items"][0]["id"]
+    d = c.get(f"/api/alerts/{aid}/context", headers=hdr(VIEWER)).get_json()
+    assert d["before_count"] + d["after_count"] > 0 and d["before"] is not None
+    assert d["complete"] is False and "rolled out" in d["note"]
+    assert c.get("/api/alerts/alr-none/context", headers=hdr(VIEWER)).status_code == 404
+    assert c.get(f"/api/alerts/{aid}/context").status_code == 401
+
+
+def test_timeline_buckets_carry_severity_and_type_breakdown(ctx):
+    _, svc, *_ = ctx
+    from datetime import datetime, timezone
+    rows = svc.alerts.timeline(datetime.fromtimestamp(0, timezone.utc), 3600)
+    assert rows and rows[0]["sev"]["HIGH"] == 1 and rows[0]["types"]["PORT_SCAN"] == 1
